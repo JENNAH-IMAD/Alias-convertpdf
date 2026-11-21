@@ -16,14 +16,18 @@ if [[ ! -f .env ]]; then
   done
   [[ $front != "$back" ]] || { echo 'Les deux ports doivent etre distincts.' >&2; exit 1; }
   [[ $host =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo 'Nom ou IPv4 invalide.' >&2; exit 1; }
-  # Hexadecimal password avoids shell, dotenv and connection-string interpolation.
-  password=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
-  printf 'FRONTEND_PORT=%s\nBACKEND_PORT=%s\nPUBLIC_HOST=%s\nDB_PASSWORD=%s\n' "$front" "$back" "$host" "$password" > .env
-  unset password
+  read -rs -p 'Connexion SQL Server accessible depuis le conteneur : ' connection
+  printf '\n'
+  [[ -n $connection ]] || { echo 'Connexion SQL Server requise.' >&2; exit 1; }
+  connection=${connection//\'/\\\'}
+  printf "FRONTEND_PORT=%s\nBACKEND_PORT=%s\nPUBLIC_HOST=%s\nALIAS_SQLSERVER='%s'\n" "$front" "$back" "$host" "$connection" > .env
+  unset connection
 else
   echo 'Configuration existante conservee. Les volumes de donnees seront reutilises.'
 fi
-docker compose --env-file .env -f compose.linux.yml up -d --build
+compose_file=compose.linux.yml
+if ! grep -q "^ALIAS_SQLSERVER=" .env && grep -q "^DB_PASSWORD=" .env; then compose_file=compose.postgres.yml; fi
+docker compose --env-file .env -f "$compose_file" up -d --build
 front=$(sed -n 's/^FRONTEND_PORT=//p' .env)
 host=$(sed -n 's/^PUBLIC_HOST=//p' .env)
 ready=false
@@ -31,7 +35,7 @@ for ((attempt=0; attempt<90; attempt++)); do
   if curl --fail --silent --max-time 3 "http://127.0.0.1:$front/api/auth/session" | grep -q 'setupRequired'; then ready=true; break; fi
   sleep 2
 done
-[[ $ready == true ]] || { echo 'Application indisponible : consulter docker compose --env-file .env -f compose.linux.yml logs.' >&2; exit 1; }
+[[ $ready == true ]] || { echo "Application indisponible : consulter docker compose --env-file .env -f $compose_file logs." >&2; exit 1; }
 printf '[InternetShortcut]\r\nURL=http://%s:%s\r\n' "$host" "$front" > Acces-Alias.url
 echo "Alias disponible : http://$host:$front"
 echo "Autoriser le port TCP $front depuis le reseau des postes dans le pare-feu du serveur."

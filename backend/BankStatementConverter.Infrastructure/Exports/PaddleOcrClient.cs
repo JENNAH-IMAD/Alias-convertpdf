@@ -5,7 +5,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace BankStatementConverter.Infrastructure.Exports;
 
-public sealed class PaddleOcrClient(HttpClient http, IConfiguration config, OcrRuntimeSettings? settings = null) : IPdfOcrClient
+public sealed class PaddleOcrClient(HttpClient http, IConfiguration config) : IPdfOcrClient
 {
     public async Task<PdfTextDocument> ExtractAsync(byte[] content, CancellationToken ct)
         => await ReadAsync(content, null, ct);
@@ -15,7 +15,7 @@ public sealed class PaddleOcrClient(HttpClient http, IConfiguration config, OcrR
 
     private async Task<PdfTextDocument> ReadAsync(byte[] content, IReadOnlyList<int>? pages, CancellationToken ct)
     {
-        var address = settings?.BaseUrl ?? config.GetValue<string>("Ocr:BaseUrl") ?? "http://127.0.0.1:8091";
+        var address = config.GetValue<string>("Ocr:BaseUrl") ?? "http://127.0.0.1:8091";
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         ExtractionTimeout.Apply(deadline, config, "Ocr:TimeoutSeconds");
         try

@@ -5,7 +5,7 @@ public sealed record AccountingEntryModel(Guid Id, string Name, string Abbreviat
     Guid BankAccountId, string AccountCode, Guid ExportTemplateId,
     [property: JsonNumberHandling(JsonNumberHandling.AllowReadingFromString | JsonNumberHandling.WriteAsString)] decimal TaxRate = 0,
     string TaxAccountCode = "", bool Active = true, bool BankAccountBased = false, EntryModelOutput? Output = null, Guid? OutputTemplateId = null);
-public sealed record EntryModelColumn(string Field, string Label, bool Display = true, bool Export = true);
+public sealed record EntryModelColumn(string Field, string Label, bool Display = true, bool Export = true, string? Format = null, bool Required = false);
 public sealed record EntryModelOutput
 {
     public string FileExtension { get; init; } = "txt";

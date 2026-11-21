@@ -31,7 +31,9 @@ static class TreatmentChecks
         await store.Save(source, null, "ENTRY", new { modelId = "chosen", keywordOverrides = new[] { "CHEQUE" }, decisions = new Dictionary<string,string?> { ["row"] = null } }, new { rows = new[] { new[] { "last" } } }, second, default);
         await store.Save(source, null, "STATEMENT", new { templateId }, new { rows = new[] { new[] { "late-old" } } }, first, default);
         // Fresh context simulates another server request; no tracked in-memory state is reused.
-        await using var fresh = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(db.Database.GetConnectionString()).Options);
+        await using AppDbContext fresh = db.Database.IsSqlServer()
+            ? new SqlServerAppDbContext(new DbContextOptionsBuilder<SqlServerAppDbContext>().UseSqlServer(db.Database.GetConnectionString()).Options)
+            : new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(db.Database.GetConnectionString()).Options);
         var restored = await new StatementTreatmentStore(fresh).Get(record.Id, null, default);
         Check(restored is { Kind: "ENTRY", Current: true } && restored.Selection.GetProperty("modelId").GetString() == "chosen"
             && restored.Preview!.Value.GetProperty("rows")[0][0].GetString() == "last", "Treatment_DurableSnapshotRejectsLateOlderRequest");

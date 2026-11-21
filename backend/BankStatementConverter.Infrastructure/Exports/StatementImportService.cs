@@ -316,7 +316,7 @@ public sealed class StatementImportService(AppDbContext db, StatementValidator v
     }
     private async Task<StatementImport> LockAsync(Guid id, int version, CancellationToken ct)
     {
-        var record = await db.StatementImports.FromSqlInterpolated($"SELECT * FROM \"StatementImports\" WHERE \"Id\" = {id} FOR UPDATE").SingleOrDefaultAsync(ct)
+        var record = await db.LockedRow<StatementImport>(id).SingleOrDefaultAsync(ct)
             ?? throw new AppException(404, "Relevé normalisé introuvable.");
         if (record.Version != version)
             throw new AppException(409, "Le relevé a changé. Rechargez les données avant de poursuivre.");
@@ -602,7 +602,7 @@ public sealed class StatementImportService(AppDbContext db, StatementValidator v
     public async Task AssociateRecordAsync(StatementImport record, Guid clientId, Guid accountId, CancellationToken ct)
     {
         // Serialize filing per account, including concurrent PDF imports and associations.
-        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({accountId.ToString()}, 0))", ct);
+        await db.LockResource(accountId.ToString(), ct);
         var account = await db.BankAccounts.AsNoTracking().Include(a => a.Bank).SingleOrDefaultAsync(a => a.Id == accountId && a.ClientId == clientId, ct)
             ?? throw new AppException(400, "Ce compte bancaire n’appartient pas au client sélectionné.");
         var statement = Detail(record).Statement;
@@ -635,7 +635,7 @@ public sealed class StatementImportService(AppDbContext db, StatementValidator v
         var records = new List<StatementImport>();
         foreach (var item in items.OrderBy(x => x.Id))
         {
-            var record = await db.StatementImports.FromSqlInterpolated($"SELECT * FROM \"StatementImports\" WHERE \"Id\" = {item.Id} FOR UPDATE")
+            var record = await db.LockedRow<StatementImport>(item.Id)
                 .SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Un relevé sélectionné n’existe plus. Actualisez la liste.");
             if (record.Version != item.Version)
                 throw new AppException(409, "Un relevé sélectionné a été modifié. Actualisez la liste avant de le supprimer.");

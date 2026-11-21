@@ -2,13 +2,7 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { usePathname } from 'next/navigation';
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   FolderKanban,
   History,
@@ -22,7 +16,6 @@ import {
   Plus,
   UsersRound,
   LockKeyhole,
-  ScanText,
   NotebookPen,
 } from 'lucide-react';
 import { useAuth, Can } from './auth-context';
@@ -38,7 +31,6 @@ const groups = [
       { href: '/dashboard', label: 'Vue d’ensemble', icon: LayoutDashboard },
       { href: '/client-workspace', label: 'Espace clients', icon: FolderKanban },
       { href: '/conversions', label: 'Conversion & export', icon: ArrowRightLeft },
-      { href: '/entry-models', label: 'Modèles d’écritures', icon: NotebookPen },
       { href: '/banks', label: 'Banques et comptes', icon: Building2 },
     ],
   },
@@ -46,13 +38,15 @@ const groups = [
     name: 'RÉFÉRENTIELS',
     items: [
       { href: '/templates', label: 'Modèles d’exportation', icon: FileSliders },
+      { href: '/entry-models', label: 'Paramétrage de l’écriture', icon: NotebookPen },
       { href: '/history', label: 'Historique', icon: History },
       { href: '/users', label: 'Utilisateurs & permissions', icon: UsersRound },
-      { href: '/settings', label: 'Configuration OCR', icon: ScanText },
     ],
   },
 ];
-type NavigationGroup = (typeof groups)[number] & { items: (typeof groups)[number]['items'][number][] };
+type NavigationGroup = (typeof groups)[number] & {
+  items: (typeof groups)[number]['items'][number][];
+};
 
 function SidebarNavigation({
   visibleGroups,
@@ -174,17 +168,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     '/conversions': 'documents.read',
     '/entry-models': 'documents.read',
     '/entry-model-results': 'documents.read',
-    '/settings': 'admin',
     '/history': 'history.read',
   };
-  const allowed = ['/users', '/settings'].includes(pathname)
-    ? user?.role === 'Admin'
-    : !routePermission[pathname] || can(routePermission[pathname]);
+  const allowed =
+    pathname === '/users'
+      ? user?.role === 'Admin'
+      : !routePermission[pathname] || can(routePermission[pathname]);
   const visibleGroups = groups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) =>
-        ['/users', '/settings'].includes(item.href)
+        item.href === '/users'
           ? user?.role === 'Admin'
           : item.href === '/banks'
             ? can('banks.read') || can('accounts.read') || can('clients.read')
@@ -233,7 +227,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ? { label: 'Comptes bancaires' }
           : pathname === '/profile'
             ? { label: 'Mon profil' }
-          : groups.flatMap((g) => g.items).find((i) => i.href === pathname);
+            : groups.flatMap((g) => g.items).find((i) => i.href === pathname);
   const navigation = (mobile = false) => (
     <>
       <div className="sidebar-header">

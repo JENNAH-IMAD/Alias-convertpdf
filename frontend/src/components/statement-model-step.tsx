@@ -8,10 +8,7 @@ import { ExportTemplate } from '@/services/api';
 import { prepareStatementModel } from '@/services/prepare-statement-model';
 import type { StatementDetail, PreparedStatementExport } from '@/services/statement-exports';
 import { isAccountingTemplate } from '@/services/export-template-defaults';
-import {
-  AccountingEntryModelFlow,
-  type EntryFlowSelection,
-} from './accounting-entry-model-flow';
+import { AccountingEntryModelFlow, type EntryFlowSelection } from './accounting-entry-model-flow';
 import type { EntryModelPreview } from '@/services/entry-models';
 import type { EntryOutputTemplate } from '@/services/entry-models';
 import { useApi } from '@/services/use-api';
@@ -56,9 +53,12 @@ export function StatementModelStep({
   const [modelKind, setModelKind] = useState<'export' | 'entry'>('export');
   const [entryOutputTemplateId, setEntryOutputTemplateId] = useState('');
   const entryOutputTemplates = useApi<EntryOutputTemplate[]>('/accounting/entry-output-templates');
-  const combinedModelValue = modelKind === 'entry'
-    ? `entry:${entryOutputTemplateId}`
-    : templateId ? `export:${templateId}` : '';
+  const combinedModelValue =
+    modelKind === 'entry'
+      ? `entry:${entryOutputTemplateId}`
+      : templateId
+        ? `export:${templateId}`
+        : '';
   const model = templates.find((item) => item.id === templateId && item.isActive);
   async function prepare() {
     if (!model || busy) return;
@@ -119,9 +119,7 @@ export function StatementModelStep({
           <p className="conversion-eyebrow">FORMAT DE SORTIE</p>
           <h2>Choisissez un modèle</h2>
           <p>
-            {extractMode
-              ? 'Choisissez un format d’export ou une écriture enregistrée pour ce client.'
-              : 'Choisissez un format d’export ou une écriture comptable enregistrée pour ce client.'}
+            Choisissez un modèle d’exportation pour le document ou pour ses écritures comptables.
           </p>
         </div>
       </div>
@@ -172,6 +170,14 @@ export function StatementModelStep({
           </optgroup>
         </select>
       </label>
+      {entryOutputTemplates.error && (
+        <div role="alert" className="conversion-alert error">
+          {entryOutputTemplates.error}
+          <Button variant="outline" onClick={entryOutputTemplates.reload}>
+            Recharger les modèles d’écritures
+          </Button>
+        </div>
+      )}
       {modelKind === 'export' && loading && <p role="status">Chargement des modèles…</p>}
       {modelKind === 'export' && error && (
         <div role="alert" className="conversion-alert error">
@@ -181,13 +187,19 @@ export function StatementModelStep({
           </Button>
         </div>
       )}
-      {modelKind === 'export' && !loading && !error && !templates.some((item) => item.isActive) && (
-        <p className="conversion-alert warning">
-          {accountingMode
-            ? 'Activez ou créez un modèle Sage 100 — écritures ou Sage X3 — écritures dans « Modèles d’exportation » pour continuer.'
-            : 'Activez ou créez un modèle dans « Modèles d’exportation » pour continuer.'}
-        </p>
-      )}
+      {modelKind === 'export' &&
+        !loading &&
+        !error &&
+        !entryOutputTemplates.loading &&
+        !entryOutputTemplates.error &&
+        !entryOutputTemplates.data?.some((item) => item.active) &&
+        !templates.some((item) => item.isActive && !isAccountingTemplate(item.type)) && (
+          <p className="conversion-alert warning">
+            {accountingMode
+              ? 'Activez ou créez un modèle Sage 100 — écritures ou Sage X3 — écritures dans « Modèles d’exportation » pour continuer.'
+              : 'Activez ou créez un modèle dans « Modèles d’exportation » pour continuer.'}
+          </p>
+        )}
       {modelKind === 'export' && model && (
         <div className="model-step-fields">
           <div>

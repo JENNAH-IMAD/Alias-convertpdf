@@ -9,7 +9,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       storageKey="bank-converter-theme"
       defaultTheme="system"
       enableSystem
-      disableTransitionOnChange
     >
       <div className="theme-root">{children}</div>
     </NextThemeProvider>

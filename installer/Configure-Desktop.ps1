@@ -23,7 +23,7 @@ if(Test-Path -LiteralPath $taskData) {
 }
 $taskConfig=Join-Path $taskData 'Alias.Runtime.json'
 $taskServerConfig=Join-Path $taskData 'Server.json'
-if(-not $taskManaged -and [string]::IsNullOrWhiteSpace($taskInput.ConnectionString) -and -not(Test-Path -LiteralPath $taskConfig)){throw 'Renseigner la connexion PostgreSQL pour la premiere installation.'}
+if(-not $taskManaged -and [string]::IsNullOrWhiteSpace($taskInput.ConnectionString) -and -not(Test-Path -LiteralPath $taskConfig)){throw 'Renseigner la connexion SQL Server pour la premiere installation.'}
 if(-not $ConfigureOnly) {
     foreach($taskExistingName in @('AliasDesktopBackend','AliasDesktopFrontend','AliasDesktopPostgreSQL')) {
         if(Get-Service $taskExistingName -ErrorAction SilentlyContinue){throw 'Des services Alias existent deja. Les desinstaller avant de reinstaller.'}
@@ -126,13 +126,17 @@ try {
         $taskConnection=Complete-AliasPostgres $taskData (Join-Path $AppRoot 'postgresql') $taskPgPlan
         if($taskInput.ImportProjectData -eq '1'){ . (Join-Path $PSScriptRoot 'Import-ProjectData.ps1'); Import-AliasProjectData $AppRoot $taskData $taskPgPlan }
     }
+    if(-not $taskManaged -and $taskInput.ImportProjectData -eq '1') {
+        . (Join-Path $PSScriptRoot 'Import-ProjectData.ps1')
+        Import-AliasProjectData $AppRoot $taskData $null
+    }
     Start-Service AliasDesktopBackend
     $taskReady=$false
     for($taskAttempt=0;$taskAttempt -lt 60;$taskAttempt++) {
         try {$taskReady=(Invoke-RestMethod "http://127.0.0.1:$taskBack/health" -TimeoutSec 2).status -eq 'ok'}catch{}
         if($taskReady){break};Start-Sleep -Seconds 1
     }
-    if(-not $taskReady){throw 'Backend indisponible : verifier PostgreSQL et les journaux serveur.'}
+    if(-not $taskReady){throw 'Backend indisponible : verifier la base de donnees et les journaux serveur.'}
     Start-Service AliasDesktopFrontend
     $taskReady=$false
     for($taskAttempt=0;$taskAttempt -lt 45;$taskAttempt++) {

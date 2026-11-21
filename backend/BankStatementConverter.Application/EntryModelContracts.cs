@@ -11,7 +11,14 @@ public sealed record EntryOutputTemplateSave(string Name, string Description, bo
 /// <summary>Read-only classification request; null decisions explicitly exclude an ambiguous movement.</summary>
 public sealed record EntryModelRun(Guid ClientId, Guid StatementId, Guid ExportTemplateId, string Abbreviation,
     Guid? ExtractId = null, IReadOnlyDictionary<Guid, Guid?>? Decisions = null, string? PreviewFingerprint = null, bool Confirmed = false, Guid? ModelId = null,
-    IReadOnlyList<string>? KeywordOverrides = null, Guid? OutputTemplateId = null);
+    IReadOnlyList<string>? KeywordOverrides = null, Guid? OutputTemplateId = null,
+    string? BalancedScope = null, IReadOnlyDictionary<Guid, string>? CounterAccounts = null,
+    bool ConfirmDefaultVat = false, bool ForceUnverifiedDownload = false,
+    IReadOnlyDictionary<Guid, decimal>? FeeVatRates = null,
+    IReadOnlyDictionary<int, EntryLineEdit>? LineEdits = null, decimal DefaultCommissionVatRate = 0);
+
+public sealed record EntryLineEdit(Guid TransactionId, string OriginalAccount, string Journal,
+    string Date, string AccountCode, string PieceNumber, string Description, string Debit, string Credit);
 /// <summary>One matching model and the original configured phrases found in the movement label.</summary>
 public sealed record EntryModelCandidate(Guid Id, string Name, string AccountCode, decimal TaxRate, IReadOnlyList<string> Keywords);
 /// <summary>Auditable classification of an original movement with decimal amounts serialized as strings.</summary>
@@ -19,12 +26,15 @@ public sealed record EntryModelRow(Guid TransactionId, int Sequence, DateOnly? D
     IReadOnlyList<EntryModelCandidate> Candidates, Guid? ModelId,
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString)] decimal? Total,
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString)] decimal? Net,
-    [property: JsonNumberHandling(JsonNumberHandling.WriteAsString)] decimal? Tax, string Message);
+    [property: JsonNumberHandling(JsonNumberHandling.WriteAsString)] decimal? Tax, string Message,
+    string? CounterAccount = null, string? AccountCategory = null, Guid? LinkedVatId = null,
+    [property: JsonNumberHandling(JsonNumberHandling.WriteAsString)] decimal? LinkedVatAmount = null);
 /// <summary>Classification and proposed result; last preview is remembered without posting or exporting entries.</summary>
 public sealed record EntryModelPreview(Guid ClientId, Guid StatementId, Guid? ExtractId, string Abbreviation,
     int SourceVersion, int SettingsVersion, string Fingerprint, IReadOnlyList<EntryModelRow> Rows,
     IReadOnlyList<AccountingLine> Lines, IReadOnlyList<AccountingIssue> Errors, bool CanExport,
-    EntryModelOutput? Output = null, IReadOnlyList<EntryResultRow>? ResultRows = null);
+    EntryModelOutput? Output = null, IReadOnlyList<EntryResultRow>? ResultRows = null,
+    bool CommissionOnlyVat = false);
 public sealed record EntryResultRow(Guid TransactionId, int Sequence, DateOnly? Date, string AccountCode, string Title,
     string Description, string Bank, string Abbreviation, string Currency, string Reference,
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)] decimal Gross,
@@ -32,7 +42,8 @@ public sealed record EntryResultRow(Guid TransactionId, int Sequence, DateOnly? 
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)] decimal Tax,
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)] decimal Rate,
     [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)] decimal DebitHt = 0,
-    [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)] decimal CreditHt = 0);
+    [property: JsonNumberHandling(JsonNumberHandling.WriteAsString | JsonNumberHandling.AllowReadingFromString)] decimal CreditHt = 0,
+    string? Journal = null, string? PieceNumber = null);
 public sealed record EntryArchiveDetail(Guid Id, Guid ClientId, Guid StatementId, string ClientName, string BankName,
     string SourceFileName, string ModelName, string FileName, int SourceVersion, int DossierVersion, DateTime CreatedAt,
     string GeneratedByName, string ContentSha256, AccountingEntryModel Model, EntryModelOutput Output,

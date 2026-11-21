@@ -20,6 +20,19 @@ public sealed class StatementTreatmentStore(AppDbContext db)
             source.ClientId, source.BankAccountId, now, JsonSerializer.SerializeToElement(selection, Json),
             JsonSerializer.SerializeToElement(preview, Json)), Json);
         // Ignore a late response from an older request or an obsolete source version.
+        if (db.Database.IsSqlServer())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                MERGE StatementTreatments WITH (HOLDLOCK) AS target
+                USING (SELECT Id FROM StatementImports WITH (HOLDLOCK) WHERE Id={source.Id} AND Version={source.Version}
+                    AND EXISTS (SELECT ClientId, BankAccountId INTERSECT SELECT {source.ClientId}, {source.BankAccountId})) AS src
+                ON target.StatementId=src.Id AND target.ScopeId={scope}
+                WHEN MATCHED AND target.RequestedAt <= {requestedAt} THEN UPDATE SET SnapshotJson={snapshot}, RequestedAt={requestedAt}, UpdatedAt={now}
+                WHEN NOT MATCHED THEN INSERT (Id, StatementId, ScopeId, SnapshotJson, RequestedAt, CreatedAt, UpdatedAt)
+                    VALUES ({Guid.NewGuid()}, src.Id, {scope}, {snapshot}, {requestedAt}, {now}, {now});
+                """, ct);
+            return;
+        }
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "StatementTreatments" ("Id", "StatementId", "ScopeId", "SnapshotJson", "RequestedAt", "CreatedAt", "UpdatedAt")
             SELECT {Guid.NewGuid()}, {source.Id}, {scope}, CAST({snapshot} AS jsonb), {requestedAt}, {now}, {now}

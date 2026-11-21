@@ -14,7 +14,14 @@ export type EntryModel = {
   output?: EntryModelOutput;
   outputTemplateId?: string | null;
 };
-export type EntryModelColumn = { field: string; label: string; display: boolean; export: boolean };
+export type EntryModelColumn = {
+  field: string;
+  label: string;
+  display: boolean;
+  export: boolean;
+  format?: string | null;
+  required?: boolean;
+};
 export type EntryModelOutput = {
   fileExtension?: 'txt' | 'csv' | 'tsv';
   delimiter: string;
@@ -26,6 +33,8 @@ export type EntryModelOutput = {
 };
 export const entryFields: Record<string, string> = {
   ACCOUNT: 'N° compte',
+  JOURNAL: 'Journal',
+  PIECE: 'N° de pièce',
   TITLE: 'Intitulé',
   DESCRIPTION: 'Libellé',
   BANK: 'Banque',
@@ -40,6 +49,27 @@ export const entryFields: Record<string, string> = {
   ABBREVIATION: 'Abréviation',
   CURRENCY: 'Devise',
 };
+export const entryDateFormats = [
+  'ddMMyy',
+  'ddMMyyyy',
+  'yyMMdd',
+  'yyyyMMdd',
+  'yyyy-MM-dd',
+  'dd/MM/yyyy',
+  'dd-MM-yyyy',
+  'MM/dd/yyyy',
+];
+export const entryNumericFields = new Set(['NET', 'DEBIT_HT', 'CREDIT_HT', 'GROSS', 'TAX', 'RATE']);
+export function defaultEntryColumnFormat(
+  field: string,
+  numberCulture = 'fr-FR',
+  dateFormat = 'dd/MM/yyyy',
+) {
+  if (field === 'DATE') return dateFormat || 'dd/MM/yyyy';
+  if (entryNumericFields.has(field))
+    return `number:${numberCulture}:${field === 'RATE' ? '0.##' : '0.00'}`;
+  return '';
+}
 export const defaultEntryOutput = (): EntryModelOutput => ({
   fileExtension: 'txt',
   delimiter: ';',
@@ -48,7 +78,14 @@ export const defaultEntryOutput = (): EntryModelOutput => ({
   dateFormat: 'dd/MM/yyyy',
   includeHeader: true,
   columns: ['ACCOUNT', 'TITLE', 'DESCRIPTION', 'BANK', 'DATE', 'DEBIT_HT', 'CREDIT_HT'].map(
-    (field) => ({ field, label: entryFields[field], display: true, export: true }),
+    (field) => ({
+      field,
+      label: entryFields[field],
+      display: true,
+      export: true,
+      format: defaultEntryColumnFormat(field),
+      required: false,
+    }),
   ),
 });
 export type EntryOutputTemplate = {
@@ -70,6 +107,8 @@ export type EntryResultRow = {
   abbreviation: string;
   currency: string;
   reference: string;
+  journal?: string | null;
+  pieceNumber?: string | null;
   gross: string;
   net: string;
   debitHt: string;
@@ -99,6 +138,12 @@ export type EntryArchiveDetail = {
 };
 export type EntryModelDossier = { clientId: string; version: number; models: EntryModel[] };
 export type EntryModelRun = {
+  lineEdits?: Record<number, EntryLineEdit>;
+  balancedScope?: 'all' | 'fees';
+  counterAccounts?: Record<string, string>;
+  confirmDefaultVat?: boolean;
+  feeVatRates?: Record<string, number>;
+  defaultCommissionVatRate?: number;
   outputTemplateId?: string;
   clientId: string;
   statementId: string;
@@ -111,6 +156,18 @@ export type EntryModelRun = {
   previewFingerprint?: string;
   confirmed?: boolean;
 };
+
+export type EntryLineEdit = {
+  transactionId: string;
+  originalAccount: string;
+  journal: string;
+  date: string;
+  accountCode: string;
+  pieceNumber: string;
+  description: string;
+  debit: string;
+  credit: string;
+};
 export type EntryModelCandidate = {
   id: string;
   name: string;
@@ -119,6 +176,10 @@ export type EntryModelCandidate = {
   keywords: string[];
 };
 export type EntryModelRow = {
+  linkedVatId?: string | null;
+  linkedVatAmount?: string | null;
+  counterAccount?: string | null;
+  accountCategory?: string | null;
   transactionId: string;
   sequence: number;
   date: string | null;
@@ -132,6 +193,7 @@ export type EntryModelRow = {
   message: string;
 };
 export type EntryModelPreview = {
+  commissionOnlyVat?: boolean;
   output?: EntryModelOutput;
   resultRows?: EntryResultRow[];
   clientId: string;

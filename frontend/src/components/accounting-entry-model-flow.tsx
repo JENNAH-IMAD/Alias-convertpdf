@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { ArrowRight, BookOpen } from 'lucide-react';
 import { Button } from './ui/button';
 import { ConversionSteps } from './conversion-steps';
+import { EntryModelEditor, newEntryRule } from './client-entry-models';
 import { useAll, useApi } from '@/services/use-api';
 import { request, type Account, type Bank, type Client } from '@/services/api';
 import type {
+  EntryModel,
   EntryModelDossier,
   EntryModelPreview,
   EntryOutputTemplate,
@@ -52,7 +54,10 @@ export function AccountingEntryModelFlow({
   const accounts = useAll<Account>('/bank-accounts');
   const banks = useAll<Bank>('/banks');
   const formats = useApi<EntryOutputTemplate[]>('/accounting/entry-output-templates');
-  const [formatChoice, setFormatChoice] = useState(initial.outputTemplateId || '');
+  const [standaloneFormat, setFormatChoice] = useState(initial.outputTemplateId || '');
+  const formatChoice = embedded ? initial.outputTemplateId || '' : standaloneFormat;
+  const format = formats.data?.find((item) => item.id === formatChoice && item.active);
+  const [draftRule, setDraftRule] = useState<EntryModel | null>(null);
   const [clientId, setClientId] = useState(initial.clientId || detail.clientId || '');
   const models = useApi<EntryModelDossier>(
     clientId ? `/accounting/entry-models/${clientId}` : null,
@@ -69,10 +74,17 @@ export function AccountingEntryModelFlow({
         (b) => b.id === a.bankId && fold(b.code) === fold(detail.statement.bankCode || ''),
       ));
   const entries = (models.data?.models || []).filter((m) => m.active);
+  const documentAccountId = clientId === initial.clientId ? initial.bankAccountId : '';
+  const ruleAccounts = available.filter(
+    (a) =>
+      (!documentAccountId || a.id === documentAccountId) &&
+      sameBank(a) &&
+      a.currency.trim().toUpperCase() === detail.statement.currency?.trim().toUpperCase(),
+  );
   const eligibleEntries = entries.filter((model) => {
     const modelAccount = available.find((item) => item.id === model.bankAccountId);
-    return initial.bankAccountId
-      ? model.bankAccountId === initial.bankAccountId
+    return documentAccountId
+      ? model.bankAccountId === documentAccountId
       : !!modelAccount && sameBank(modelAccount);
   });
   const seeded = eligibleEntries.filter(
@@ -112,6 +124,27 @@ export function AccountingEntryModelFlow({
     clients.loading || accounts.loading || banks.loading || models.loading || formats.loading;
   const failure =
     error || clients.error || accounts.error || banks.error || models.error || formats.error;
+  async function saveRule(rule: EntryModel) {
+    if (!models.data || !format || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await request(`/accounting/entry-models/${clientId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          version: models.data.version,
+          models: [...models.data.models, rule],
+        }),
+      });
+      setChoice(rule.id);
+      setDraftRule(null);
+      models.reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function proceed() {
     if (!selected || !account || compatibilityError || outputFormatError || busy) return;
     setBusy(true);
@@ -169,8 +202,8 @@ export function AccountingEntryModelFlow({
               <p className="conversion-eyebrow">ÉCRITURES COMPTABLES</p>
               <h2>Choisissez le modèle d’écritures</h2>
               <p>
-                Le compte, les mots du libellé et le taux de TVA de l’écriture choisie seront appliqués
-                au document. Vérifiez ensuite directement le résultat.
+                Choisissez un format d’exportation, puis la règle de compte et de TVA à appliquer au
+                relevé.
               </p>
             </div>
           </div>
@@ -188,12 +221,34 @@ export function AccountingEntryModelFlow({
             <BookOpen size={21} />
           </div>
           <div>
-            <h3>Écritures comptables de l’entreprise</h3>
-            <p>Choisissez une écriture enregistrée pour cette banque et ce relevé.</p>
+            <h3>Règle comptable du client</h3>
+            <p>Choisissez ou créez la règle à appliquer aux mouvements du relevé.</p>
           </div>
         </header>
       )}
       <>
+        {!embedded && (
+          <label className="conversion-template-label">
+            Modèle d’exportation des écritures
+            <select
+              className="ui-input mt-2"
+              value={formatChoice}
+              disabled={busy || formats.loading}
+              onChange={(e) => setFormatChoice(e.target.value)}
+            >
+              <option value="">
+                {selected ? 'Format enregistré dans la règle' : 'Choisir un modèle d’exportation…'}
+              </option>
+              {formats.data
+                ?.filter((t) => t.active)
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
         {(!embedded || !detail.clientId) && (
           <label className="conversion-template-label">
             Entreprise
@@ -225,25 +280,27 @@ export function AccountingEntryModelFlow({
               : ` · ${detail.statement.bankName}`}
           </p>
         )}
-        <label className="conversion-template-label">
-          Écriture comptable
-          <select
-            aria-label="Écriture de l’entreprise"
-            className="ui-input mt-2"
-            value={selected?.id || ''}
-            disabled={busy || loading || !clientId}
-            onChange={(e) => setChoice(e.target.value)}
-          >
-            <option value="">Choisir une écriture enregistrée…</option>
-            {eligibleEntries.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.abbreviation} — {m.name} · {m.accountCode} · TVA {m.taxRate} % ·{' '}
-                {available.find((a) => a.id === m.bankAccountId)?.bank || 'Compte indisponible'} ·{' '}
-                {m.keywords.join(', ')}
-              </option>
-            ))}
-          </select>
-        </label>
+        {eligibleEntries.length > 0 && (
+          <label className="conversion-template-label">
+            Règle comptable du client
+            <select
+              aria-label="Règle comptable du client"
+              className="ui-input mt-2"
+              value={selected?.id || ''}
+              disabled={busy || loading || !clientId}
+              onChange={(e) => setChoice(e.target.value)}
+            >
+              <option value="">Choisir une règle du client…</option>
+              {eligibleEntries.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.abbreviation} — {m.name} · {m.accountCode} · TVA {m.taxRate} % ·{' '}
+                  {available.find((a) => a.id === m.bankAccountId)?.bank || 'Compte indisponible'} ·{' '}
+                  {m.keywords.join(', ')}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {selected && (
           <div className="model-step-document">
             <strong>
@@ -254,47 +311,39 @@ export function AccountingEntryModelFlow({
             </span>
           </div>
         )}
-        {!embedded && <label className="conversion-template-label">
-          Modèle d’affichage et d’exportation
-          <select
-            aria-label="Modèle d’affichage des écritures"
-            className="ui-input mt-2"
-            value={formatChoice}
-            disabled={busy || formats.loading}
-            onChange={(e) => setFormatChoice(e.target.value)}
-          >
-            <option value="">Format enregistré dans l’écriture</option>
-            {formats.data?.map((t) => (
-              <option key={t.id} value={t.id} disabled={!t.active}>
-                {t.name} · .{t.output.fileExtension || 'txt'}
-                {!t.active ? ' (inactif)' : ''}
-              </option>
-            ))}
-          </select>
-        </label>}
-        {!embedded && formatChoice && (
-          <p className="muted text-sm">
-            Le format choisi définit les colonnes de consultation et le fichier téléchargé pour ce
-            traitement. L’écriture enregistrée reste inchangée.
-          </p>
-        )}
         {!loading && !failure && clientId && !eligibleEntries.length && (
           <p className="conversion-alert warning">
-            Aucune écriture active ne correspond à ce compte bancaire.{' '}
-            <Link className="underline" href={`/entry-models?clientId=${clientId}`}>
-              Créer une écriture pour cette entreprise
-            </Link>
+            {ruleAccounts.length ? (
+              format ? (
+                'Créez la première règle de ce client pour ce compte.'
+              ) : (
+                'Choisissez un format d’exportation pour créer la première règle de ce compte.'
+              )
+            ) : (
+              <>
+                Ajoutez un compte de cette banque dans la devise du document dans{' '}
+                <Link className="underline" href="/banks">
+                  Banques et comptes
+                </Link>
+                .
+              </>
+            )}
           </p>
         )}
         <div className="entry-model-actions">
-          <Link
-            className="underline text-sm"
-            href={`/entry-models?clientId=${clientId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Gérer les écritures de cette entreprise
-          </Link>
+          {clientId && ruleAccounts.length > 0 && (
+            <Button
+              permission="documents.write"
+              variant="outline"
+              disabled={!format || !models.data || busy}
+              onClick={() => {
+                setError('');
+                setDraftRule(newEntryRule(format));
+              }}
+            >
+              Créer une règle pour ce client
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -360,6 +409,27 @@ export function AccountingEntryModelFlow({
           {busy ? 'Préparation…' : 'Vérifier le résultat'}
         </Button>
       </div>
+      {draftRule && (
+        <EntryModelEditor
+          initial={draftRule}
+          forConversion
+          accounts={ruleAccounts}
+          formats={formats.data || []}
+          busy={busy || loading}
+          error={failure || outputFormatError}
+          onReload={() => {
+            setError('');
+            models.reload();
+            accounts.reload();
+            formats.reload();
+          }}
+          onClose={() => {
+            setDraftRule(null);
+            setError('');
+          }}
+          onSave={saveRule}
+        />
+      )}
     </section>
   );
 }

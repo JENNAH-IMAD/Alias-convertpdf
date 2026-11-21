@@ -57,6 +57,34 @@
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+.templates-page .template-use-link {
+  padding-top: 12px;
+  color: var(--link);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.templates-page .template-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 36px 24px;
+  text-align: center;
+}
+.templates-page .template-empty-state > svg {
+  color: var(--link);
+}
+.templates-page .template-empty-state h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.templates-page .template-empty-state p {
+  max-width: 560px;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.6;
+}
 .entry-models-page .entry-model-context {
   padding: 20px 24px;
   border-radius: 12px;

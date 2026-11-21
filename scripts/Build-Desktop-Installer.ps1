@@ -18,6 +18,8 @@ foreach($taskDirectory in @('frontend','node','postgresql')){
 if($LASTEXITCODE -ne 0){throw 'Publication backend impossible.'}
 & dotnet publish (Join-Path $taskRoot 'tools\DesktopApp') -c Release -r win-x64 --self-contained true -o (Join-Path $taskStage 'desktop')
 if($LASTEXITCODE -ne 0){throw 'Publication desktop impossible.'}
+& dotnet publish (Join-Path $taskRoot 'tools\ProjectSnapshot') -c Release -r win-x64 --self-contained true -o (Join-Path $taskStage 'snapshot-tool')
+if($LASTEXITCODE -ne 0){throw 'Publication de l outil de restauration impossible.'}
 & dotnet run --project (Join-Path $taskRoot 'tools\ProjectSnapshot') -c Release -- $taskRoot $taskSnapshot (Join-Path $taskStage 'postgresql\bin\pg_dump.exe')
 if($LASTEXITCODE -ne 0){throw 'Export de la base impossible.'}
 Copy-Item -LiteralPath $taskSnapshot -Destination (Join-Path $taskStage 'project-data') -Recurse

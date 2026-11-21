@@ -241,6 +241,7 @@ function ConversionStudio() {
                     'entryTemplateId',
                     'entryAbbreviation',
                     'entryModelId',
+                    'outputTemplateId',
                   ]) {
                     const value = searchParams.get(key);
                     if (value) entryParams.set(key, value);

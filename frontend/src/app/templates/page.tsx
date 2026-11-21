@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button';
 import { BankDialog } from '@/components/bank-dialogs';
 import { ExportTemplateEditor } from '@/components/export-template-editor';
 import { pageTheme as theme } from '@/components/page-theme';
-import { ExportTemplate, Page, request } from '@/services/api';
+import { documentBlob, ExportTemplate, Page, request } from '@/services/api';
+import { chooseExportDestination, saveExportBlob } from '@/lib/save-export';
+import { TemplateExcelButton } from '@/components/template-excel-button';
 import { useApi } from '@/services/use-api';
-import { Copy, FileOutput, Pencil, Plus, Trash2, Columns3 } from 'lucide-react';
+import { Copy, Download, FileOutput, Pencil, Plus, Trash2, Columns3 } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { LoadState } from '@/components/ui/load-state';
 import { Pagination } from '@/components/ui/pagination';
@@ -44,19 +46,7 @@ function TemplateSections() {
           Écritures comptables
         </Button>
       </nav>
-      {entries ? (
-        <>
-          <PageHeader
-            icon={FileOutput}
-            eyebrow="Modèles d’exportation · Écritures comptables"
-            title="Formats d’écritures comptables"
-            description="Définissez les colonnes, le séparateur et l’encodage des fichiers de vos clients."
-          />
-          <EntryExportTemplates />
-        </>
-      ) : (
-        <LegacyTemplatesPage />
-      )}
+      {entries ? <EntryExportTemplates /> : <LegacyTemplatesPage />}
     </div>
   );
 }
@@ -72,6 +62,17 @@ function LegacyTemplatesPage() {
   const [busy, setBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [notice, setNotice] = useState('');
+  const [downloadError, setDownloadError] = useState('');
+  async function downloadStructure(model: ExportTemplate) {
+    setDownloadError('');
+    try {
+      const extension = model.fileExtension || 'txt';
+      const destination = await chooseExportDestination(`modele_export.${extension}`, extension);
+      await saveExportBlob(await documentBlob(`/export-templates/${model.id}/file`), destination);
+    } catch (cause) {
+      if ((cause as Error).name !== 'AbortError') setDownloadError((cause as Error).message);
+    }
+  }
   async function remove() {
     if (!deleting || busy) return;
     setBusy(true);
@@ -148,7 +149,7 @@ function LegacyTemplatesPage() {
           {notice}
         </p>
       )}
-      <LoadState loading={loading} error="" />
+      <LoadState loading={loading} error={downloadError} />
       {error && (
         <p role="alert">
           {error}{' '}
@@ -197,6 +198,19 @@ function LegacyTemplatesPage() {
               </div>
             </div>
             <div className="catalog-card-actions">
+              <Button
+                permission="documents.export"
+                variant="outline"
+                onClick={() => void downloadStructure(model)}
+              >
+                <Download size={15} /> Fichier
+              </Button>
+              <TemplateExcelButton
+                name={model.name}
+                columns={[...model.fields]
+                  .sort((a, b) => a.position - b.position)
+                  .map((field) => field.fieldName)}
+              />
               <Button
                 permission="templates.write"
                 variant="outline"

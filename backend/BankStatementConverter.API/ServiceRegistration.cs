@@ -17,7 +17,7 @@ internal static class ServiceRegistration
 {
     public static void AddAliasServices(this WebApplicationBuilder builder)
     {
-        builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+        builder.Services.AddAliasDatabase(builder.Configuration.GetConnectionString("Default"));
         builder.Services.AddControllers(options => options.Filters.Add<PermissionFilter>())
             .AddJsonOptions(options =>
                 options.JsonSerializerOptions.NumberHandling = JsonNumberHandling.AllowReadingFromString);
@@ -99,38 +99,14 @@ internal static class ServiceRegistration
         builder.Services.AddScoped<IProcessingProgress>(s => s.GetRequiredService<RequestProcessingProgress>());
         builder.Services.AddSingleton<StatementPdfExtractor>();
         builder.Services.AddSingleton<IStatementPdfExtractor>(s => s.GetRequiredService<StatementPdfExtractor>());
-        builder.Services.AddSingleton<OcrSettingsStore>();
         builder.Services.AddSingleton<OcrWorkQueue>();
-        // Les clients OCR gèrent leur délai ; les URL distantes peuvent contenir des jetons.
-        builder.Services.AddHttpClient("paddle-cloud", http => http.Timeout = Timeout.InfiniteTimeSpan).RemoveAllLoggers();
         builder.Services.AddHttpClient("paddle-local", http => http.Timeout = Timeout.InfiniteTimeSpan).RemoveAllLoggers();
-        builder.Services.AddScoped<IPdfOcrClient>(s =>
-        {
-            var settings = s.GetRequiredService<OcrSettingsStore>().Snapshot;
-            var clients = s.GetRequiredService<IHttpClientFactory>();
-            IPdfOcrClient client = settings.Provider switch
-            {
-                "AI_STUDIO" => new PaddleAiStudioClient(
-                    clients.CreateClient("paddle-cloud"), builder.Configuration,
-                    s.GetRequiredService<StatementPdfExtractor>(), s.GetRequiredService<IProcessingProgress>(), settings),
-                "LOCAL" => new PaddleOcrClient(
-                    clients.CreateClient("paddle-local"), builder.Configuration, settings),
-                "AUTO" => settings.AutoPaddleProvider == "AI_STUDIO"
-                    ? new PaddleAiStudioClient(clients.CreateClient("paddle-cloud"), builder.Configuration, s.GetRequiredService<StatementPdfExtractor>(), s.GetRequiredService<IProcessingProgress>(), settings)
-                    : new PaddleOcrClient(clients.CreateClient("paddle-local"), builder.Configuration, settings),
-                _ => throw new InvalidOperationException("Ocr:Provider doit être AUTO, LOCAL ou AI_STUDIO.")
-            };
-            return new QueuedPdfOcrClient(client, s.GetRequiredService<OcrWorkQueue>(), s.GetRequiredService<IProcessingProgress>());
-        });
-        builder.Services.AddScoped<IAutomaticPdfExtraction>(services =>
-        {
-            var settings = services.GetRequiredService<OcrSettingsStore>().Snapshot;
-            var native = services.GetRequiredService<StatementPdfExtractor>();
-            var progress = services.GetRequiredService<IProcessingProgress>();
-            if (settings.Provider != "AUTO")
-                return new AutomaticPdfExtraction(native, services.GetRequiredService<IPdfOcrClient>(), builder.Configuration, progress);
-            return new HybridPdfExtraction(native, services.GetRequiredService<IPdfOcrClient>(), builder.Configuration, progress);
-        });
+        builder.Services.AddScoped<IPdfOcrClient>(s => new QueuedPdfOcrClient(
+            new PaddleOcrClient(s.GetRequiredService<IHttpClientFactory>().CreateClient("paddle-local"), builder.Configuration),
+            s.GetRequiredService<OcrWorkQueue>(), s.GetRequiredService<IProcessingProgress>()));
+        builder.Services.AddScoped<IAutomaticPdfExtraction>(s => new HybridPdfExtraction(
+            s.GetRequiredService<StatementPdfExtractor>(), s.GetRequiredService<IPdfOcrClient>(),
+            builder.Configuration, s.GetRequiredService<IProcessingProgress>()));
         builder.Services.AddScoped<PdfStatementImportService>();
     }
 }

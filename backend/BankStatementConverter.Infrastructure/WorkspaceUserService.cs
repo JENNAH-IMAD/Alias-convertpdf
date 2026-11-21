@@ -46,7 +46,7 @@ public sealed class WorkspaceUserService(AppDbContext db)
     public async Task<WorkspaceUser> Setup(SetupInput input, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(867530901)", ct);
+        await db.LockResource("workspace-users", ct);
         if (await db.WorkspaceUsers.AnyAsync(ct))
             throw new AppException(409, "L’espace est déjà configuré. Connectez-vous.");
         var user = new WorkspaceUser();
@@ -81,7 +81,7 @@ public sealed class WorkspaceUserService(AppDbContext db)
     public async Task<UserDto> Save(Guid? id, UserInput input, Guid actor, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(867530901)", ct);
+        await db.LockResource("workspace-users", ct);
         var user = id == null ? new WorkspaceUser() : await db.WorkspaceUsers.SingleOrDefaultAsync(u => u.Id == id, ct) ?? throw new AppException(404, "Utilisateur introuvable.");
         if (id != null && input.Version != user.Version)
             throw new AppException(409, "Cet utilisateur a changé. Rechargez sa fiche.");
@@ -114,7 +114,7 @@ public sealed class WorkspaceUserService(AppDbContext db)
     public async Task<WorkspaceUser> UpdateProfile(Guid id, UserProfileInput input, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(867530901)", ct);
+        await db.LockResource("workspace-users", ct);
         var user = await db.WorkspaceUsers.SingleOrDefaultAsync(u => u.Id == id, ct)
             ?? throw new AppException(404, "Utilisateur introuvable.");
         Validation.Text(input.Name.Trim(), "Nom", 150);
@@ -139,7 +139,7 @@ public sealed class WorkspaceUserService(AppDbContext db)
     public async Task Delete(Guid id, int version, Guid actor, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(867530901)", ct);
+        await db.LockResource("workspace-users", ct);
         if (!await db.WorkspaceUsers.AnyAsync(u => u.Id == actor && u.IsActive && u.Role == "Admin", ct))
             throw new AppException(403, "Seul un administrateur actif peut supprimer un utilisateur.");
         var user = await db.WorkspaceUsers.SingleOrDefaultAsync(u => u.Id == id, ct)

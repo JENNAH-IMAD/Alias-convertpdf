@@ -18,8 +18,13 @@ public class DashboardController(AppDbContext db) : ControllerBase
         var clients = await db.Clients.CountAsync(ct);
         var banks = await db.Banks.CountAsync(ct);
         var accounts = await db.BankAccounts.CountAsync(ct);
-        var extracts = await db.StatementImports.FromSqlRaw("SELECT * FROM \"StatementImports\" WHERE \"NormalizedJson\"->>'conversionType' = 'EXTRACT'").CountAsync(ct);
-        var exportCounts = await db.Database.SqlQuery<DashboardExportCounts>($"""
+        var extracts = await db.StatementImports.FromSqlRaw(db.Database.IsSqlServer() ? "SELECT * FROM StatementImports WHERE JSON_VALUE(NormalizedJson, '$.conversionType') = 'EXTRACT'" : "SELECT * FROM \"StatementImports\" WHERE \"NormalizedJson\"->>'conversionType' = 'EXTRACT'").CountAsync(ct);
+        var exportCounts = await db.Database.SqlQuery<DashboardExportCounts>(db.Database.IsSqlServer() ? (FormattableString)$"""
+            SELECT COUNT(*) AS Total, COUNT(CASE WHEN COALESCE(JSON_VALUE(e.TemplateSnapshotJson, '$.conversionType'),
+                CASE WHEN j.hasExtract=1 OR JSON_VALUE(s.NormalizedJson, '$.conversionType')='EXTRACT' THEN 'EXTRACT' ELSE 'STATEMENT' END)='EXTRACT' THEN 1 END) AS Extracts
+            FROM ExportJobs e LEFT JOIN StatementImports s ON s.Id=e.StatementId
+            OUTER APPLY (SELECT TOP (1) 1 AS hasExtract FROM OPENJSON(e.TemplateSnapshotJson) WHERE [key]='extract') j
+            """ : $"""
             SELECT COUNT(*)::int AS "Total",
               (COUNT(*) FILTER (WHERE COALESCE(e."TemplateSnapshotJson"->>'conversionType',
                 CASE WHEN e."TemplateSnapshotJson" ? 'extract' OR s."NormalizedJson"->>'conversionType' = 'EXTRACT'

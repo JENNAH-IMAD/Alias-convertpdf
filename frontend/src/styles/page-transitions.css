@@ -130,3 +130,25 @@
     animation-delay: 0s !important;
   }
 }
+
+/* Bidirectional circular reveal, anchored to the navbar appearance button. */
+:root[data-theme-transition]::view-transition-old(root) {
+  display:block;
+  z-index:0;
+  animation:theme-surface-out 180ms ease-out both;
+}
+:root[data-theme-transition]::view-transition-new(root) {
+  z-index:1;
+  clip-path:circle(0 at var(--theme-reveal-x, 50vw) var(--theme-reveal-y, 50vh));
+  animation:theme-surface-reveal 480ms cubic-bezier(.2,.72,.22,1) both;
+}
+@keyframes theme-surface-reveal {
+  to { clip-path:circle(150vmax at var(--theme-reveal-x, 50vw) var(--theme-reveal-y, 50vh)); }
+}
+@keyframes theme-surface-out {
+  to { opacity:.86; }
+}
+@media (prefers-reduced-motion:reduce) {
+  :root[data-theme-transition]::view-transition-old(root),
+  :root[data-theme-transition]::view-transition-new(root) { animation:none !important; clip-path:none !important; }
+}

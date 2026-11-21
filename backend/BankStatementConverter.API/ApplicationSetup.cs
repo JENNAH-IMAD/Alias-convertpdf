@@ -22,6 +22,7 @@ internal static class ApplicationSetup
                 {
                     AppException applicationError => applicationError.Status,
                     DbUpdateException { InnerException: PostgresException { SqlState: "23505" or "23503" or "23001" } } => 409,
+                    DbUpdateException { InnerException: Microsoft.Data.SqlClient.SqlException { Number: 2601 or 2627 or 547 } } => 409,
                     BadHttpRequestException requestError => requestError.StatusCode,
                     OperationCanceledException => 499,
                     _ => 500
@@ -72,21 +73,25 @@ internal static class ApplicationSetup
     {
         using var scope = app.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        if (await db.Database.CanConnectAsync())
+        var migrate = app.Configuration.GetValue<bool>("Database:AutoMigrate");
+        if ((migrate && db.Database.IsSqlServer()) || await db.Database.CanConnectAsync())
         {
-            if (app.Configuration.GetValue<bool>("Database:AutoMigrate"))
+            if (migrate)
             {
                 await db.Database.MigrateAsync();
             }
-            await Seed.RunAsync(db, app.Configuration);
+            var initializeCatalog = app.Configuration.GetValue<bool?>("Seed:InitializeCatalog")
+                ?? (!db.Database.IsSqlServer() || (!await db.Banks.AnyAsync() && !await db.ExportTemplates.AnyAsync()));
+            if (initializeCatalog)
+                await Seed.RunAsync(db, app.Configuration);
         }
         else if (app.Environment.IsDevelopment())
         {
-            app.Logger.LogWarning("PostgreSQL indisponible : demarrage de l'API sans initialisation de base. /health renverra 503 jusqu'a ce que la base soit accessible.");
+            app.Logger.LogWarning("Base de données indisponible : demarrage de l'API sans initialisation de base. /health renverra 503 jusqu'a ce que la base soit accessible.");
         }
         else
         {
-            throw new InvalidOperationException("PostgreSQL indisponible. Configurez ConnectionStrings__Default et verifiez que la base est accessible.");
+            throw new InvalidOperationException("Base de données indisponible. Configurez ConnectionStrings__Default et verifiez que la base est accessible.");
         }
     }
 }

@@ -75,7 +75,7 @@ sealed class DesktopWindow : Form
                 await Task.Delay(1000);
             }
             if (!ready)
-                throw new InvalidOperationException("Services locaux indisponibles. Vérifiez les services AliasDesktopPostgreSQL, AliasDesktopBackend et AliasDesktopFrontend dans Windows, puis cliquez sur Actualiser.");
+                throw new InvalidOperationException("Services locaux indisponibles. Vérifiez les services SQL Server, AliasDesktopBackend et AliasDesktopFrontend dans Windows, puis cliquez sur Actualiser.");
             var profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Alias Desktop", "Browser");
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: profile);
             await browser.EnsureCoreWebView2Async(environment);

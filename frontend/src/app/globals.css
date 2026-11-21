@@ -208,6 +208,42 @@ textarea:focus-visible {
   background: var(--background);
   color: var(--foreground);
 }
+.theme-root,
+.app-shell,
+.desktop-sidebar,
+.topbar,
+.app-scroll,
+.overview-card,
+.dashboard-heading,
+.overview-metric,
+.alias-menu-trigger,
+.alias-theme-menu {
+  transition-property:color,background-color,border-color,box-shadow;
+  transition-duration:220ms;
+  transition-timing-function:cubic-bezier(.2,.72,.22,1);
+}
+:root[data-theme-transition] .theme-root,
+:root[data-theme-transition] .app-shell,
+:root[data-theme-transition] .desktop-sidebar,
+:root[data-theme-transition] .topbar,
+:root[data-theme-transition] .app-scroll,
+:root[data-theme-transition] .overview-card,
+:root[data-theme-transition] .dashboard-heading,
+:root[data-theme-transition] .overview-metric,
+:root[data-theme-transition] .alias-menu-trigger,
+:root[data-theme-transition] .alias-theme-menu { transition:none !important; }
+@media (prefers-reduced-motion:reduce) {
+  .theme-root,
+  .app-shell,
+  .desktop-sidebar,
+  .topbar,
+  .app-scroll,
+  .overview-card,
+  .dashboard-heading,
+  .overview-metric,
+  .alias-menu-trigger,
+  .alias-theme-menu { transition:none !important; }
+}
 .muted {
   color: var(--muted-foreground);
 }

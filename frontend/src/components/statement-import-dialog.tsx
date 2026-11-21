@@ -75,7 +75,11 @@ export function StatementImportDialog({
         body: input,
         signal: controller.signal,
       });
-      onImported(saved, clientId, conversionType);
+      onImported(
+        saved,
+        clientId,
+        initialConversionType === 'ACCOUNTING' ? 'ACCOUNTING' : conversionType,
+      );
     } catch (e) {
       if (controller.signal.aborted) {
         setCancelling(true);

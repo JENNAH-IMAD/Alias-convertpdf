@@ -1,5 +1,9 @@
 # Installation d’Alias Desktop 2.0.0
 
+Pour la version SQL Server, indiquez la connexion à l’instance lors de l’installation. Le service backend utilise **NetworkService**, qui doit pouvoir accéder à la base et appliquer les migrations. Pour utiliser la base déjà migrée, sélectionnez **Utiliser la base configurée** et reprenez son dossier de fichiers sous `uploads`. Pour une copie privée empaquetée au format BACPAC, choisissez une base dédiée vide et un dossier de données neuf. Les sessions et les suppressions de fichiers en attente sont exclues de cette copie de distribution. Sauvegardez la base avec SQL Server et le répertoire de fichiers ensemble.
+
+Les instructions PostgreSQL ci-dessous concernent les anciens paquets avec un fichier `database.dump`.
+
 ## Ce que contient le paquet
 
 Application Windows 10/11, 64 bits, dans une fenêtre dédiée avec le logo Alias. Le frontend, le backend, .NET, Node.js et PostgreSQL sont inclus. Microsoft WebView2 est utilisé pour afficher l’interface ; son installateur télécharge le runtime si celui-ci manque.
@@ -21,7 +25,7 @@ Les services `AliasDesktopPostgreSQL`, `AliasDesktopBackend` et `AliasDesktopFro
 
 - Copie du projet : utilisez les identifiants de votre compte actuel. Aucun mot de passe initial n’est inscrit dans ce guide.
 - Base neuve : créez le premier compte administrateur au lancement.
-- Dans **Configuration OCR**, sélectionnez votre moteur PaddleOCR, renseignez le jeton et enregistrez. La lecture par API PaddleOCR nécessite Internet et dépend du quota de votre compte.
+- La lecture des pages scannées utilise le service PaddleOCR local.
 - Qwen et Ollama ne sont pas inclus. Le prompt ChatGPT reste disponible sur le dashboard comme aide manuelle.
 
 ## Sauvegardes et réinstallation

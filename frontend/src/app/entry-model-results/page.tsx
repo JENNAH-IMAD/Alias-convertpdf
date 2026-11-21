@@ -30,8 +30,8 @@ function ResultsPage() {
         description="Après le choix du modèle, retrouvez le compte, l’intitulé, le libellé, la banque et le montant hors taxes de chaque mouvement retenu."
         actions={
           <Button variant="outline" asChild>
-            <Link href={`/entry-models${clientId ? '?clientId=' + clientId : ''}`}>
-              <Settings2 size={16} /> Paramétrer les modèles
+            <Link href="/templates?section=entries">
+              <Settings2 size={16} /> Modèles d’exportation des écritures
             </Link>
           </Button>
         }

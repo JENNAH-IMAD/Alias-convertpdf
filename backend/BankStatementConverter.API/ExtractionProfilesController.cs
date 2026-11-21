@@ -41,7 +41,7 @@ public class ExtractionProfilesController(AppDbContext db, StatementImportServic
             throw new AppException(409, "Le relevé a changé. Actualisez avant d’enregistrer le modèle.");
         var raw = await imports.ExtractionAsync(input.StatementId, ct);
         normalizer.Normalize(ExtractionProfileRules.ApplyAliases(raw, input.Aliases), detail.Statement.BankName, detail.Statement.BankCode ?? "", detail.Statement.Currency ?? "", ct, mapping, detail.Statement);
-        var profile = id.HasValue ? await db.ExtractionProfiles.FromSqlInterpolated($"SELECT * FROM \"ExtractionProfiles\" WHERE \"Id\" = {id.Value} FOR UPDATE").SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Modèle introuvable.") : new ExtractionProfile { CreatedByName = Actor };
+        var profile = id.HasValue ? await db.LockedRow<ExtractionProfile>(id.Value).SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Modèle introuvable.") : new ExtractionProfile { CreatedByName = Actor };
         if (id.HasValue && profile.Version != input.Version)
             throw new AppException(409, "Le modèle a changé. Actualisez la liste.");
         profile.Name = input.Name.Trim();
@@ -90,7 +90,7 @@ public class ExtractionProfilesController(AppDbContext db, StatementImportServic
     public async Task<IActionResult> Delete(Guid id, [FromQuery] int version, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var profile = await db.ExtractionProfiles.FromSqlInterpolated($"SELECT * FROM \"ExtractionProfiles\" WHERE \"Id\" = {id} FOR UPDATE").SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Modèle introuvable.");
+        var profile = await db.LockedRow<ExtractionProfile>(id).SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Modèle introuvable.");
         if (profile.Version != version)
             throw new AppException(409, "Le modèle a changé.");
         db.ExtractionProfileActivities.Add(new()

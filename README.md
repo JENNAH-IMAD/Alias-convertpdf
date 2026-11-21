@@ -1,153 +1,136 @@
-# Alias — gestion et conversion bancaire
+# Alias Convert PDF
 
-Application pour gérer les clients, banques, comptes, PDF originaux et modèles
-d’exportation. Les relevés et extraits bancaires sont lus, contrôlés et corrigés
-avant la préparation des fichiers CSV, Sage 100 ou Sage X3.
+Alias transforme des relevés et des extraits bancaires en fichiers exploitables dans Excel, Sage 100 et Sage X3. L’application conserve le PDF original, permet de vérifier et de corriger les mouvements lus, puis classe les documents et les résultats par client et compte bancaire.
 
-## Architecture
+## Fonctionnalités
 
-- **Backend** : ASP.NET Core / .NET 8, Entity Framework Core et PostgreSQL.
-- **Interface** : Next.js 16, React 19, TypeScript et Tailwind CSS 4.
-- **Lecture locale** : texte natif PDF, PaddleOCR PP-OCRv6 et PP-StructureV3.
-- **Lecture distante facultative** : PaddleOCR AI Studio.
-- **Livraison** : Docker, scripts Windows et utilitaires desktop/serveur.
+| Écran | Ce que vous pouvez faire |
+| --- | --- |
+| **Vue d’ensemble** | Suivre les imports, les exports et les documents à vérifier. |
+| **Conversion & export** | Importer un PDF ou un extrait, choisir la banque et la devise, consulter l’original, corriger les mouvements, puis télécharger le résultat. |
+| **Espace clients** | Retrouver les relevés, extraits et écritures archivées. Rechercher un document et filtrer par statut ou modèle d’exportation. |
+| **Banques et comptes** | Gérer le référentiel bancaire et renseigner le compte général, le journal et la devise de chaque compte. |
+| **Modèles d’exportation** | Configurer et dupliquer les formats CSV et Sage. Modifier les colonnes, l’ordre des champs, les formats de dates et de montants, les séparateurs et l’encodage. |
+| **Paramétrage de l’écriture** | Gérer les règles propres aux clients et préparer des pièces équilibrées. Renseigner les comptes de contrepartie par ligne ou par lot. |
+| **Historique et accès** | Consulter l’activité selon les permissions et gérer les utilisateurs depuis le compte administrateur. |
 
-Voir [l’analyse et les conventions du projet](docs/qualite-projet.md).
+### Lecture des PDF
 
-Le catalogue initial reprend les 21 banques conventionnelles et participatives
-de la [liste SGFG](https://www.sgfg.ma/fr/garantie-des-depots/liste-des-banques-membres).
-Les banques absentes et leurs logos embarqués sont ajoutés au démarrage. Les noms,
-codes et logos personnalisés des banques existantes restent conservés ; les anciens
-noms et codes reconnus évitent de réintroduire la même banque sous un nouveau nom.
+Alias lit d’abord le texte natif. Les pages nécessitant une reconnaissance passent au service local **PaddleOCR**. Le moteur exploite les positions du texte et la structure des tableaux pour aider à reconstituer les mouvements. L’interface signale les anomalies de lecture et permet de contrôler le résultat à côté du PDF. [Documentation du moteur local](services/ocr/README.md).
 
-## Installation locale
+### Écritures Sage 100 équilibrées
 
-Prérequis : .NET 8, Node.js compatible avec Next.js 16, npm et PostgreSQL 17.
-Python 3.12 est nécessaire pour le service OCR local.
+Le journal et le compte général de banque proviennent du compte bancaire sélectionné. Le traitement porte sur l’ensemble des mouvements du relevé ou de l’extrait choisi. Vous pouvez compléter les contreparties, appliquer un taux de TVA aux commissions en lot ou par ligne, puis recalculer les pièces. La TVA apparaît sous la commission et la contrepartie bancaire conserve le total du mouvement.
 
-Configurer la connexion PostgreSQL dans le fichier local non versionné
-`backend/BankStatementConverter.API/appsettings.Development.json`.
-Pour créer une installation vide, activer `Database:AutoMigrate` au premier
-démarrage. Les données de démonstration sont désactivées par défaut.
+| Ligne d’une pièce illustrative | Débit (MAD) | Crédit (MAD) |
+| --- | ---: | ---: |
+| Commission HT | 137,50 | |
+| TVA à 20 % | 27,50 | |
+| Banque | | 165,00 |
 
-Pour transférer une installation existante, restaurer sa sauvegarde PostgreSQL et
-copier son stockage `backend/BankStatementConverter.API/uploads`. Le stockage et
-les sauvegardes ne sont pas inclus dans Git. Voir [le guide de transfert](data/transfer/README.md).
-Les clés de protection et les réglages chiffrés doivent accompagner le transfert
-pour conserver les réglages OCR enregistrés.
+L’aperçu affiche les mouvements à corriger et les totaux débit/crédit. Le téléchargement TXT ou Excel et l’archivage se font depuis le résultat. Un export exceptionnel confirmé avec des anomalies porte la mention **À vérifier**.
+
+## Technologies
+
+| Composant | Technologies |
+| --- | --- |
+| Interface web | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
+| API et traitement métier | ASP.NET Core et SDK .NET 8, Entity Framework Core |
+| Base de données | Microsoft SQL Server |
+| Lecture PDF | Texte natif et service Python 3.12 avec PaddleOCR PP-OCRv6 et PP-StructureV3 |
+| Déploiement | Scripts PowerShell sous Windows et Docker Compose pour le déploiement conteneurisé |
+
+## Installation sous Windows
+
+### 1. Récupérer les sources et vérifier les prérequis
+
+Installez Git, le SDK .NET 8, Node.js avec npm, Python 3.12 x64 et SQL Server. Pour cette version de Next.js, utilisez Node.js 20.9 ou une version supérieure compatible. SQL Server Express convient à une installation locale. La base doit avoir un niveau de compatibilité 130 ou supérieur.
 
 ```powershell
-cd frontend
-npm ci
+git clone https://github.com/JENNAH-IMAD/Alias-convertpdf.git
+Set-Location Alias-convertpdf
 ```
 
-Le fichier [.env.example](.env.example) décrit les réglages Docker et serveur.
-Le fichier [frontend/.env.example](frontend/.env.example) décrit le proxy de l’interface.
-Ne jamais mettre de véritables clés ou mots de passe dans ces exemples.
+Vérifiez que la branche récupérée correspond à ce README. Si elle indique PostgreSQL, utilisez la copie SQL Server du projet ou sa branche lorsqu’elle est publiée.
 
-## Lancement
+### 2. Configurer SQL Server
 
-Sous Windows, `Lancer-local.cmd` démarre l’API et l’interface.
-Pour démarrer les services séparément :
+Créez ou complétez le fichier local `backend/BankStatementConverter.API/appsettings.Development.json`.
 
-```powershell
-dotnet run --project backend/BankStatementConverter.API --urls http://localhost:5081
+```json
+{
+  "ConnectionStrings": {
+    "Default": "Server=localhost;Database=Alias;Integrated Security=True"
+  },
+  "Database": {
+    "AutoMigrate": true
+  },
+  "Seed": {
+    "DemoData": false
+  }
+}
 ```
 
-Dans un autre terminal :
+Adaptez le serveur et le nom de base à votre instance. Avec l’authentification Windows, le compte qui lance l’API doit avoir accès à SQL Server et les droits nécessaires pour appliquer les migrations. Utilisez une connexion sécurisée et gardez les identifiants dans la configuration locale.
+
+Pour reprendre des données existantes, conservez la sauvegarde SQL Server, le dossier défini par `Storage:Root` et les clés de protection. L’outil `tools/SqlServerTransfer` permet de copier et vérifier une ancienne base PostgreSQL dont le schéma correspond au projet.
+
+### 3. Installer les dépendances et lancer Alias
+
+Depuis la racine du projet, installez les dépendances web.
 
 ```powershell
-cd frontend
-npm run dev
+npm --prefix frontend ci
 ```
 
-Pour l’OCR local :
+Dans un terminal dédié, installez et démarrez le moteur OCR. Les modèles sont téléchargés lors de leur première utilisation, puis mis en cache. Laissez le terminal ouvert.
 
 ```powershell
-# Premier lancement sur un nouveau poste avec Python 3.12 installé :
 powershell -ExecutionPolicy Bypass -File services/ocr/start.ps1 -Install
-# Lancements suivants :
-powershell -ExecutionPolicy Bypass -File services/ocr/start.ps1
 ```
 
-Ouvrir `http://localhost:3002` et créer le compte administrateur à la première
-ouverture. L’interface accède à l’API par `/api`, sur la même origine. Le service
-OCR local écoute par défaut sur `127.0.0.1:8091`.
-
-## Traitement des relevés et extraits
-
-1. Importer le PDF et choisir la banque, la devise et éventuellement son classement client.
-2. Choisir un modèle d’exportation existant.
-3. Comparer les mouvements reconnus au PDF original et corriger les informations nécessaires.
-4. Vérifier les contrôles, puis télécharger le fichier au format du modèle choisi.
-
-Le mode `AUTO` utilise d’abord le texte natif. Les pages suspectes passent à
-PaddleOCR et PP-StructureV3. Les contrôles comparent les cellules, les positions,
-les dates, les montants, les lignes reconnues et les soldes. Chaque nouvelle
-lecture repart du PDF original ; aucun ancien résultat d’extraction n’est substitué.
-Les poids des modèles OCR restent réutilisés pour éviter leur téléchargement à chaque import.
-
-La chaîne locale ne nécessite aucun jeton. La page des paramètres propose Automatique,
-PaddleOCR local et PaddleOCR AI Studio. Le mode Automatique utilise le moteur PaddleOCR
-choisi ; aucun autre moteur distant de secours n’est appelé.
-Voir [la configuration OCR](services/ocr/README.md).
-
-L’application n’impose pas de plafond de taille PDF, de transactions, de pages ni
-de durée de conversion par défaut. La file OCR reste partagée entre utilisateurs,
-avec deux traitements actifs par défaut. Les contraintes matérielles et les
-quotas éventuels des fournisseurs distants continuent de s’appliquer.
-
-Le panneau **Documents** affiche le PDF original, le PDF converti et le texte source.
-Il peut être replié pour donner toute la largeur au tableau. Le PDF converti reprend
-les champs du document source ; les dates abrégées sont complétées lorsque la
-période, l’en-tête ou les dates des soldes permettent de les déterminer.
-Les corrections des mouvements et les formats du modèle s’appliquent à l’export
-CSV/TXT. Les extraits filtrés sauvegardés possèdent leur propre aperçu PDF.
-
-Le tableau affiche toutes les lignes dans une zone défilante. Les soldes initial
-et final sont nécessaires pour Sage X3. Une page illisible, des lignes manquantes
-ou une divergence financière doivent être examinées avant validation. Les contrôles
-ne garantissent pas à eux seuls l’exactitude d’un document de format inconnu.
-
-## Vérification
-
-Sous Windows, cette commande compile le backend et les outils de livraison, vérifie
-les scripts PowerShell, TypeScript, ESLint, le formatage et le build Next.js :
+Dans un deuxième terminal, lancez l’API et l’interface.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/Check-Project.ps1 -Production
+.\Lancer-local.cmd
 ```
 
-Sans `-Production`, le build Next.js est omis. Le build de production utilise
-`.next-runtime` pour préserver le serveur de développement dans `.next`.
-Les vérifications individuelles sont également disponibles :
+Ouvrez [Alias sur le port 3002](http://localhost:3002). À la première ouverture d’une base neuve, créez le compte administrateur. Pour les démarrages suivants, relancez le script OCR sans `-Install`, puis ouvrez `Lancer-local.cmd`.
+
+### 4. Vérifier les services
 
 ```powershell
-dotnet build BankStatementConverter.sln
-cd frontend
-npm run typecheck
-npm run lint
-npm run format:check
-npm run build
+Invoke-RestMethod http://127.0.0.1:5081/health
+Invoke-RestMethod http://127.0.0.1:8091/health
 ```
 
-La validation fonctionnelle se fait manuellement avec vos PDF réels, en comparant
-les dates, libellés, débits, crédits et soldes au document original. Les anciennes
-suites de tests et leurs réponses API simulées ont été retirées.
+Les deux services doivent répondre avec un statut `ok`. Le premier démarrage de PaddleOCR peut prendre plus de temps pendant le chargement des modèles.
 
-## Maintenance et livraison
+## Utiliser Alias
 
-Le nettoyage propose une liste limitée de diagnostics et fichiers générés connus :
+1. Dans **Banques et comptes**, préparez le client et son compte bancaire. Pour les écritures, renseignez le journal et le compte général.
+2. Cliquez sur **Importer un PDF**. Choisissez le type de document, la banque, la devise et, si possible, le dossier client.
+3. Sélectionnez le modèle d’exportation dans le parcours de conversion.
+4. Comparez les mouvements au PDF original. Vérifiez dates, libellés, montants, sens débit/crédit et soldes. Corrigez et enregistrez.
+5. Pour des écritures comptables, vérifiez les comptes de contrepartie et la TVA des commissions. Cliquez sur **Enregistrer et recalculer les écritures**, puis contrôlez l’équilibre.
+6. Téléchargez le résultat ou archivez-le. Consultez ensuite **Espace clients** pour retrouver les documents et les fichiers associés.
+
+## Documentation et maintenance
+
+- Pour installer et lancer la version de ce dépôt, suivez les instructions ci-dessus.
+
+`output` est ignoré par Git. Il peut contenir des éléments générés et des livrables locaux. Copiez les éléments à conserver avant de nettoyer ce dossier.
+
+| Sous-dossier | Contenu à vérifier avant nettoyage |
+| --- | --- |
+| `output/installers`, `output/server-package`, `output/desktop-client` | Les paquets et installateurs locaux doivent être conservés ou régénérés si vous en avez encore besoin. |
+| `output/runtime` | Certains lanceurs Windows utilisent ce runtime. Préservez sa configuration locale et reconstruisez-le avant de relancer ces modes si vous le supprimez. |
+| Dossiers de migration, de transfert ou de snapshot | Vérifiez s’ils contiennent l’unique copie d’un export, d’une sauvegarde ou d’un rapport. |
+
+Le script de nettoyage affiche d’abord les éléments ciblés. Utilisez `-Execute` après vérification.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/Cleanup-GeneratedFiles.ps1
-powershell -ExecutionPolicy Bypass -File scripts/Cleanup-GeneratedFiles.ps1 -Execute
 ```
 
-Il conserve les sources, configurations locales, PDF importés, sauvegardes,
-installateurs, runtime de lancement et modèles OCR. Les cibles utilisées par un
-processus sont ignorées ; les jonctions et liens symboliques ne sont pas traversés.
-
-Voir [le guide serveur](installer/INSTALLATION.md) et [le guide desktop](installer/GUIDE-DESKTOP.md).
-Les scripts `Build-Server-Installer.ps1`, `Build-Desktop-Installer.ps1` et
-`Build-Linux-Package.ps1` restent nécessaires à la fabrication des livrables.
+Pour vérifier le projet, utilisez `scripts/Check-Project.ps1`. Pour un déploiement, consultez le [guide serveur](installer/INSTALLATION.md) et le [guide desktop](installer/GUIDE-DESKTOP.md).

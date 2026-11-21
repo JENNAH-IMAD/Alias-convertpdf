@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { flushSync } from 'react-dom';
 import { DropdownMenu } from 'radix-ui';
 import { ChevronDown, CircleUserRound, LoaderCircle, LogOut, Moon, Sun, UserRound } from 'lucide-react';
 import { useTheme } from './theme-context';
@@ -8,33 +9,67 @@ import { useAuth } from './auth-context';
 export function ThemeToggle() {
   const { setTheme, isLightMode } = useTheme();
   const nextTheme = isLightMode ? 'dark' : 'light';
-  const LabelIcon = isLightMode ? Moon : Sun;
+  const toggleTheme = (button: HTMLButtonElement) => {
+    const root = document.documentElement;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const startTransition = document.startViewTransition?.bind(document);
+    if (!startTransition || reducedMotion) {
+      setTheme(nextTheme);
+      return;
+    }
+    const bounds = button.getBoundingClientRect();
+    root.style.setProperty('--theme-reveal-x', `${bounds.left + bounds.width / 2}px`);
+    root.style.setProperty('--theme-reveal-y', `${bounds.top + bounds.height / 2}px`);
+    root.setAttribute('data-theme-transition', '');
+    try {
+      const transition = startTransition(() => {
+        flushSync(() => setTheme(nextTheme));
+        root.setAttribute('data-theme', nextTheme);
+      });
+      const cleanup = () => {
+        root.removeAttribute('data-theme-transition');
+        root.style.removeProperty('--theme-reveal-x');
+        root.style.removeProperty('--theme-reveal-y');
+      };
+      void transition.finished.then(cleanup, cleanup);
+    } catch {
+      root.removeAttribute('data-theme-transition');
+      root.style.removeProperty('--theme-reveal-x');
+      root.style.removeProperty('--theme-reveal-y');
+      setTheme(nextTheme);
+    }
+  };
   return (
     <button
       type="button"
       className="alias-menu-trigger mini-menu-trigger appearance-toggle"
       aria-label={`Activer le mode ${isLightMode ? 'sombre' : 'clair'}`}
       title={`Activer le mode ${isLightMode ? 'sombre' : 'clair'}`}
-      onClick={() => setTheme(nextTheme)}
+      onClick={(event) => toggleTheme(event.currentTarget)}
     >
-      <LabelIcon size={17} aria-hidden="true" />
+      <span className="appearance-toggle-glyph" aria-hidden="true">
+        <Moon className="appearance-moon" size={17} />
+        <Sun className="appearance-sun" size={17} />
+      </span>
     </button>
   );
 }
 
 export function ThemeMenu() {
   const { user, logout, loggingOut, logoutError } = useAuth();
+  const initials = user?.name.trim().split(/\s+/).slice(0, 2).map((part) => part.charAt(0).toLocaleUpperCase()).join('');
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
         type="button"
         className="alias-menu-trigger mini-menu-trigger account-menu-trigger"
-        aria-label="Ouvrir le menu du compte"
-        title="Mon compte"
+        aria-label={`Ouvrir le menu de ${user?.name || 'mon compte'}`}
+        title={user?.name || 'Mon compte'}
       >
         <span className="account-menu-avatar" aria-hidden="true">
-          {user?.name.trim().charAt(0).toLocaleUpperCase() || <CircleUserRound size={17} />}
+          {initials || <CircleUserRound size={17} />}
         </span>
+        <span className="account-menu-name">{user?.name || 'Mon compte'}</span>
         <ChevronDown size={12} aria-hidden="true" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>

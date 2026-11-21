@@ -45,7 +45,7 @@ if($Mode -ne 'Local') {
     if(-not(Test-Path -LiteralPath $ConfigFile)){throw "Configurer $ConfigFile à partir de Alias.Runtime.json.example avant ce lancement."}
 }
 if(-not(Test-AliasApi)) {
-    if(Test-AliasPort 5081){throw 'Le port API 5081 est occupé ou PostgreSQL est indisponible. Vérifier /health avant de relancer.'}
+    if(Test-AliasPort 5081){throw 'Le port API 5081 est occupé ou la base de données est indisponible. Vérifier /health avant de relancer.'}
     $taskVariables=@{ASPNETCORE_ENVIRONMENT=if($Mode -eq 'Local'){'Development'}else{'Production'}}
     if($ConfigFile){$taskVariables['ALIAS_CONFIG_FILE']=[IO.Path]::GetFullPath($ConfigFile)}
     if($Mode -eq 'Local') {
@@ -66,7 +66,7 @@ if(-not(Test-AliasApi)) {
     }
     $taskApiProcess=Start-AliasProcess (Get-Command dotnet.exe).Source $taskArgs $taskBackend $taskVariables 'api'
     for($taskAttempt=0;$taskAttempt -lt 45;$taskAttempt++) { if(Test-AliasApi){break}; if($taskApiProcess.HasExited){throw "L'API s'est arrêtée. Consulter $taskLogs\api.err.log"}; Start-Sleep -Milliseconds 1000 }
-    if(-not(Test-AliasApi)){throw "API non prête. Vérifier PostgreSQL et $taskLogs\api.out.log"}
+    if(-not(Test-AliasApi)){throw "API non prête. Vérifier la base de données et $taskLogs\api.out.log"}
 } else { Write-Output 'API déjà disponible sur le port 5081.' }
 if(-not(Test-AliasUi)) {
     if(Test-AliasPort $Port){throw "Le port $Port est occupé par un autre service. Choisir -Port 3003, par exemple."}

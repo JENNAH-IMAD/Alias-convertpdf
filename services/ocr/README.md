@@ -2,8 +2,7 @@
 
 ## Chaîne locale de traitement
 
-Le mode `AUTO` avec `LOCAL` utilise uniquement les moteurs de lecture locaux. Chaque nouvelle
-lecture repart des octets du PDF original. Seuls les poids des modèles sont réutilisés.
+Chaque lecture locale repart des octets du PDF original. Seuls les poids des modèles sont réutilisés.
 
 1. Le backend lit le texte natif, ses positions et les zones en image. Une lecture
    native complète et cohérente n’est pas envoyée inutilement à l’OCR.
@@ -27,50 +26,9 @@ Le premier lancement télécharge leurs poids. `/health` expose `layout_ready` e
 version de chaîne `local-layout-v1`. Si la structure échoue, l’OCR positionnel reste
 actif et une alerte indique le repli : aucun résultat ancien n’est substitué.
 
-Le mode automatique utilise PaddleOCR local ou PaddleOCR AI Studio selon
-`Hybrid__AutoPaddleProvider`. Aucun autre moteur de secours distant n’est appelé.
-La chaîne locale n’utilise aucun jeton et conserve les contrôles sur les valeurs
-illisibles ou contradictoires.
-
-Le compte **Admin** peut saisir ou remplacer le jeton PaddleOCR AI Studio depuis
-**Configuration OCR** dans l’application, sans redémarrage. Le jeton n’est jamais
-renvoyé au navigateur et les réglages sont enregistrés chiffrés côté serveur.
-Ces réglages prennent priorité sur les fichiers de configuration décrits ci-dessous.
-
-## API PP-OCRv6
-
-Le modèle cloud est configurable avec `Ocr:CloudModel` (`Ocr__CloudModel` dans Docker).
-La configuration locale utilise maintenant `PP-OCRv6`, avec le jeton uniquement dans
-`appsettings.Development.json`, exclu de Git. Le modèle `PaddleOCR-VL-1.6` reste pris en charge.
-
-PP-OCRv6 utilise les options `useDocOrientationClassify`, `useDocUnwarping` et
-`useTextlineOrientation` désactivées, puis le même protocole de soumission et de suivi
-décrit ci-dessous. Ses résultats `result.ocrResults[]` contiennent `rec_texts`,
-`rec_scores` et `rec_polys` dans `prunedResult`. Les polygones sont convertis en points
-PDF à partir des dimensions fournies par le service. Les textes, coordonnées, scores
-et JSON brut sont conservés pour l’adaptation bancaire et la revue. Les images de
-visualisation ne sont pas nécessaires à l’import. Ce modèle ne produit pas les tableaux
-HTML de PaddleOCR-VL ; l’adaptation utilise les positions du texte reconnu.
-
-### Erreur HTTPS constatée le 9 octobre 2026
-
-Le diagnostic local reçoit pour `paddleocr.aistudio-app.com` le certificat
-`CN=Fortiguard SDNS Blocked Page, O=Fortinet`, avec un nom de serveur incorrect et une
-racine non approuvée. Cela indique une page de blocage du filtre réseau FortiGuard.
-L’administrateur du réseau doit vérifier la catégorie de filtrage et autoriser le
-domaine de l’API pour cet usage. Les domaines HTTPS des résultats devront également
-être accessibles après la lecture. Le client conserve la vérification des certificats ;
-il affiche une erreur HTTPS distincte des erreurs de fichier, de quota et de jeton.
-
-La configuration de PP-OCRv6 peut être vérifiée manuellement dans l’application locale.
-Le test réel complet reste impossible tant que ce blocage réseau persiste.
-
-Source : [API officielle PP-OCRv6](https://ai.baidu.com/ai-doc/AISTUDIO/7mfz6dgx9).
-
 ## Relevés scannés avec colonnes étroites
 
-Le parcours conseillé est `Ocr:Provider=AUTO` avec `AutoPaddleProvider=LOCAL` dans
-Configuration OCR. Le texte natif fiable est conservé ; les pages scannées ou
+Le texte natif fiable est conservé ; les pages scannées ou
 incomplètes passent à PaddleOCR local et à PP-StructureV3. Les pages restant
 illisibles sont signalées pour contrôle ; aucune lecture externe supplémentaire
 n’est déclenchée.
@@ -97,90 +55,14 @@ Le moteur local relit les dates sous l’en-tête compact `OPER VALEUR` lorsque 
 deux colonnes se touchent. Il retire les traits verticaux du recadrage et reconnaît
 chaque paire de dates avant l’adaptation bancaire. Une décimale tronquée par une
 bordure est relue directement dans son image, sans être complétée par calcul.
-Ces reprises ciblées concernent le fournisseur `LOCAL` (et sa sélection en mode
-`AUTO`) ; elles ne modifient pas les réponses des API OCR distantes.
 
 Le lecteur bancaire reconnaît ces intitulés CIH, les dates des soldes et le compte
 dans la grille RIB. Il garde les deux dates séparées et n’utilise jamais le montant
 du premier mouvement comme solde initial illisible. Les résultats OCR restent à
 comparer au scan, notamment pour les libellés et les petits caractères.
 
-## API officielle PaddleOCR-VL-1.6 (même moteur que le site AI Studio)
-
-Le moteur essaie d'abord le texte natif du PDF, y compris en mode `AI_STUDIO`.
-Une lecture sans défaut détecté est conservée pour la revue. Les scans et lectures
-incomplètes passent au fournisseur OCR configuré. `Ocr:PreferNativeText=false`
-permet de demander explicitement une lecture OCR systématique.
-
-En mode `AI_STUDIO`, les PDF nécessitant l'OCR sont transmis à l'API distante avec
-le modèle `Ocr:CloudModel`. Une connexion Internet et un jeton AI Studio valide avec
-du quota sont nécessaires. Aucun runtime Python local n'est requis dans ce mode.
-Un refus explicite « file pleine » (10010), avant création d'un travail, déclenche
-jusqu'à trois nouvelles tentatives après 2, 4 et 8 secondes. `Ocr:QueueRetryCount`
-accepte 0 à 5 tentatives supplémentaires. Le délai global reste applicable ; les
-erreurs de quota, d'authentification et les échecs réseau ne sont pas resoumis.
-
-Ajouter cette section au fichier local `backend/BankStatementConverter.API/appsettings.Development.json`
-(exclu de Git et de la publication), ou fournir les variables d’environnement correspondantes :
-
-```json
-"Ocr": {
-  "Provider": "AI_STUDIO",
-  "CloudToken": "VOTRE_JETON_AI_STUDIO",
-  "TimeoutSeconds": 0
-}
-```
-
-Variables serveur : `Ocr__Provider=AI_STUDIO`, `Ocr__CloudToken`, `Ocr__TimeoutSeconds`.
-Ne jamais placer le jeton dans `NEXT_PUBLIC_*`, les fichiers suivis par Git ou le navigateur.
-Redémarrer l’API après une modification de configuration. Pour Docker, renseigner ces
-variables dans `.env` (voir `.env.example`).
-
-Le client .NET suit le protocole du SDK officiel :
-
-1. `POST https://paddleocr.aistudio-app.com/api/v2/ocr/jobs` : multipart `file`,
-   `model=PaddleOCR-VL-1.6`, `optionalPayload` avec orientation, déformation et graphiques
-   désactivés, comme dans l’exemple fourni.
-2. `GET .../jobs/{jobId}` toutes les cinq secondes : `pending`, `running`, `done`, `failed`.
-   Le délai couvre la soumission, l’attente et le téléchargement ; les annulations sont propagées.
-3. Téléchargement JSONL depuis `data.resultUrl.jsonUrl`, **sans envoyer le jeton API**
-   à l’hébergeur du résultat. La taille est limitée à 64 Mo et toutes les pages sont vérifiées.
-4. Chaque `result.layoutParsingResults[]` conserve son JSON original, son Markdown,
-   les blocs de `prunedResult.parsing_res_list` et les cellules des tableaux HTML.
-   Les coordonnées des blocs sont converties des pixels en points PDF ; les cellules
-   financières sont lues directement, sans inventer de coordonnées ou de scores de confiance.
-5. L’adaptation reconnaît les en-têtes Date, Date valeur, Libellé/Opération/Nature,
-   Débit, Crédit et Référence. Les retours de ligne, dates coupées, séparateurs décimaux,
-   reports de page et soldes sont traités avant l’export. Les montants contenus dans
-   les libellés restent du texte. Les images de visualisation ne sont pas nécessaires
-   à l’adaptation bancaire ; leurs références restent dans le JSON brut.
-
-Dans **Texte lu & adaptation**, les vues **Tableaux / Markdown / JSON** permettent
-de contrôler les résultats. Les boutons d’extraction téléchargent toutes les pages
-en JSON ou Markdown. L’adaptation manuelle utilise les numéros de cellules affichés
-(colonnes à partir de 1 dans l’interface, indices à partir de 0 dans l’API), pas les
-positions des blocs. Les lignes d’en-tête fusionnées sont prises en charge automatiquement.
-La fiche et l’export restent à vérifier : un résultat OCR ne valide jamais un relevé.
-
-Le JSON complet est conservé dans `StatementImports.RawExtractionJson` (JSONB),
-le relevé adapté dans `NormalizedJson` et le PDF original dans le stockage existant.
-Aucune nouvelle migration ni modification des modèles d’exportation n’est nécessaire.
-Une erreur de jeton renvoie HTTP 503 avec une instruction de configuration, le quota
-HTTP 429, une lecture incomplète HTTP 502 et un dépassement du délai HTTP 504.
-Le mode cloud ne bascule pas silencieusement vers le moteur local.
-
-Pour vérifier le traitement réel, importer votre relevé depuis `/conversions`,
-sélectionner le fournisseur configuré puis comparer les mouvements, libellés,
-débits, crédits et soldes extraits au PDF original.
-
-Sources officielles : [API et SDK PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR/tree/main/api_sdk),
-[pipeline PaddleOCR-VL](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/pipeline_usage/PaddleOCR-VL.en.md),
-[AI Studio](https://aistudio.baidu.com/paddleocr).
-
 ## Moteur local PP-OCRv6
 
-Pour ce mode, choisir `Ocr:Provider=AUTO` avec `Hybrid:AutoPaddleProvider=LOCAL`,
-ou `Ocr:Provider=LOCAL` pour utiliser directement le moteur local. Le texte natif est lu en priorité ;
 PaddleOCR local est utilisé pour les scans et les tableaux natifs non reconnus.
 
 Le service effectue seulement l’étape de lecture : **PDF → images → blocs de texte**.

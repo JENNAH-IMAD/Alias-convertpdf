@@ -1,5 +1,9 @@
 # Alias Serveur 1.2.0 : installation automatique
 
+**SQL Server** est le choix par défaut des nouvelles installations. Indiquez une instance accessible et une base dédiée. Sous Windows, accordez au compte du service backend les droits sur cette base et les migrations. Sous Linux, le script demande la connexion accessible depuis le conteneur et conserve la valeur dans le fichier local `.env`. Une ancienne configuration Linux avec `DB_PASSWORD` continue de démarrer son volume PostgreSQL, jusqu’au transfert explicite. Pour une base migrée, conservez aussi le stockage des PDF et les clés de protection.
+
+Les indications de provisionnement PostgreSQL ci-dessous concernent le mode historique.
+
 Installer Alias uniquement sur le serveur. Les postes ouvrent l'adresse du serveur
 dans leur navigateur ou avec le raccourci `Acces-Alias.url`. Aucun client a installer.
 
@@ -14,7 +18,7 @@ Le livrable inclut Node.js, le backend .NET autonome, PostgreSQL 18.6 et les ser
 3. Choisir un dossier de donnees dedie, hors du dossier du programme.
 4. Renseigner `http://NOM_OU_IP_FIXE_DU_SERVEUR:PORT_FRONTEND`.
 5. Apres installation, ouvrir Alias et creer le premier administrateur, puis les utilisateurs.
-6. Configurer le moteur et le jeton PaddleOCR dans **Configuration OCR**, avec l'administrateur.
+6. Pour la lecture OCR, démarrez le service PaddleOCR local.
 
 Le mode automatique cree un cluster PostgreSQL dedie a Alias et une base `alias`, avec
 un compte applicatif `alias_app` non superutilisateur. Les mots de passe sont generes
@@ -49,7 +53,7 @@ Les postes doivent rejoindre le reseau du serveur et se connecter avec leur comp
 
 L'icone **Gestion du serveur Alias** ouvre une application desktop reservee au serveur.
 Windows demande les droits administrateur. Elle affiche l'etat des services, permet de
-demarrer/arreter/redemarrer, d'ouvrir Alias, pgAdmin, la configuration OCR et les journaux.
+demarrer/arreter/redemarrer, d'ouvrir Alias, pgAdmin et les journaux.
 Les informations PostgreSQL se consultent dans une boite dediee ; le mot de passe reste
 masque tant que l'administrateur ne choisit pas de l'afficher ou de le copier.
 pgAdmin doit deja etre installe sur le serveur ; il n'est pas inclus dans le gestionnaire.
@@ -65,7 +69,7 @@ Le dossier choisi (par defaut `C:\ProgramData\Alias Serveur`) contient :
 
 - `Alias.Runtime.json` : connexion applicative privee.
 - `Server.json` : ports et adresse d'acces.
-- `uploads` : PDF, exports, cles et configuration OCR chiffree.
+- `uploads` : PDF, exports, cles.
 - `postgres` : donnees de la base automatique.
 - `Postgres.Admin.json` : identifiants de maintenance reserves aux administrateurs
   et au compte d'installation ; aucun compte applicatif ne doit les recevoir.

@@ -1,18 +1,18 @@
 name: alias-server
 services:
-  db:
-    image: postgres:16-alpine
+  ocr:
+    build:
+      context: ..
+      dockerfile: services/ocr/Dockerfile
     environment:
-      POSTGRES_DB: alias
-      POSTGRES_USER: alias
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?Run install-linux.sh first}
+      WEB_CONCURRENCY: ${OCR_WORKERS:-2}
+      OCR_CPU_THREADS: ${OCR_CPU_THREADS:-2}
+      OCR_MODEL_SIZE: ${OCR_MODEL_SIZE:-small}
+      OCR_PIPELINE: ${OCR_PIPELINE:-structure}
+      OCR_LAYOUT_MODEL: ${OCR_LAYOUT_MODEL:-PP-DocLayout-M}
+      OCR_DETECTION_MAX_SIDE: ${OCR_DETECTION_MAX_SIDE:-1280}
     volumes:
-      - database:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U alias -d alias"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
+      - ocr-models:/root/.paddlex
     restart: unless-stopped
   backend:
     build:
@@ -21,14 +21,13 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: ${BACKEND_PORT:-5081}
-      ConnectionStrings__Default: Host=db;Port=5432;Database=alias;Username=alias;Password=${DB_PASSWORD}
+      ConnectionStrings__Default: ${ALIAS_SQLSERVER:?Configurer la connexion SQL Server}
       Database__AutoMigrate: "true"
       Seed__DemoData: "false"
       Swagger__Enabled: "false"
       AllowedHosts: "*"
       Storage__Root: /app/uploads
-      Ocr__Provider: AI_STUDIO
-      Ocr__CloudModel: PP-OCRv6
+      Ocr__BaseUrl: http://ocr:8091
       Ocr__MaxConcurrentJobs: ${OCR_CONCURRENT_JOBS:-2}
       Ocr__MaxQueuedJobs: ${OCR_QUEUED_JOBS:-32}
       Ocr__QueueWaitSeconds: "600"
@@ -37,8 +36,7 @@ services:
     volumes:
       - documents:/app/uploads
     depends_on:
-      db:
-        condition: service_healthy
+      - ocr
     restart: unless-stopped
   frontend:
     build:
@@ -52,5 +50,5 @@ services:
       - backend
     restart: unless-stopped
 volumes:
-  database:
   documents:
+  ocr-models:

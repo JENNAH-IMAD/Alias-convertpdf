@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -6,13 +6,12 @@ import {
   Search,
   Download,
   Archive,
-  ChartNoAxesCombined,
   CheckCircle2,
   PanelRightClose,
   PanelRightOpen,
-  ArrowLeft,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BankDialog } from '@/components/bank-dialogs';
 import { LoadState } from '@/components/ui/load-state';
 import { ConversionSteps } from '@/components/conversion-steps';
 import { EntryResultTable } from '@/components/entry-result-table';
@@ -20,20 +19,45 @@ import { StatementPdfPanel } from '@/components/statement-pdf-panel';
 import { EntrySourceSummary } from '@/components/entry-source-summary';
 import { useAll, useApi } from '@/services/use-api';
 import { API_URL, apiError, request } from '@/services/api';
-import { date, money, type StatementDetail } from '@/services/statement-exports';
+import {
+  money,
+  type StatementTransaction,
+  type StatementDetail,
+} from '@/services/statement-exports';
 import type {
   EntryModelDossier,
   EntryModelPreview,
   EntryModelRun,
-  EntryModelRow,
   EntryOutputTemplate,
 } from '@/services/entry-models';
 import { saveReadyExportBlob } from '@/lib/save-export';
 import { downloadExcel } from '@/lib/download-excel';
-import { hasUnsavedChanges } from '@/lib/use-unsaved-changes';
+import { hasUnsavedChanges, useUnsavedChanges } from '@/lib/use-unsaved-changes';
 import { useAuth } from '@/components/auth-context';
 import '@/styles/entry-models.css';
 
+const accountCategories = [
+  ['all', 'Toutes les catégories'],
+  ['invalid', 'Mouvements à corriger'],
+  ['vat', 'TVA'],
+  ['commission', 'Commissions'],
+  ['fee', 'Frais'],
+  ['transfer', 'Virements'],
+  ['cheque', 'Chèques'],
+  ['mixed', 'Commission et TVA regroupées'],
+  ['other', 'Autres'],
+] as const;
+
+function summarizeIssues(issues: { code: string; message: string }[]) {
+  const counts = new Map<string, number>();
+  for (const issue of issues) {
+    const message = issue.message.replace(/^Ligne \d+ : /, '');
+    counts.set(message, (counts.get(message) ?? 0) + 1);
+  }
+  return [...counts].map(([message, count]) =>
+    count > 1 ? `${count} mouvements · ${message}` : message,
+  );
+}
 type Source = {
   id: string;
   bankName: string;
@@ -80,6 +104,7 @@ export function EntryModelResultsWorkspace({
   const [extractId, setExtractId] = useState(initialExtract);
   const formatId = '00000000-0000-0000-0000-000000000000';
   const [selectedModelId, setSelectedModelId] = useState(initialModelId);
+  const [outputTemplateId, setOutputTemplateId] = useState(initialOutputTemplateId);
   const [abbreviation, setAbbreviation] = useState(initialAbbreviation);
   const detail = useApi<StatementDetail>(sourceId ? `/statement-imports/${sourceId}` : null);
   const [decisions, setDecisions] = useState<Record<string, string | null>>(
@@ -100,17 +125,46 @@ export function EntryModelResultsWorkspace({
             : {}),
           ...(initialExtract ? { extractId: initialExtract } : {}),
           decisions: initialRun?.decisions || {},
+          ...(initialRun?.balancedScope
+            ? {
+                balancedScope: initialRun.balancedScope,
+                counterAccounts: initialRun.counterAccounts || {},
+                ...(initialRun.confirmDefaultVat ? { confirmDefaultVat: true } : {}),
+                ...(initialRun.feeVatRates ? { feeVatRates: initialRun.feeVatRates } : {}),
+                ...(initialRun.defaultCommissionVatRate
+                  ? { defaultCommissionVatRate: initialRun.defaultCommissionVatRate }
+                  : {}),
+                ...(initialRun.lineEdits ? { lineEdits: initialRun.lineEdits } : {}),
+              }
+            : {}),
         })
       : '',
   );
+  const legacyFeesScope = initialRun?.balancedScope === 'fees';
+  const [balancedScope, setBalancedScope] = useState<'' | 'all'>(
+    initialRun?.balancedScope || (guided && !initialRun) ? 'all' : '',
+  );
+  const [counterAccounts, setCounterAccounts] = useState(initialRun?.counterAccounts || {});
+  const [accountCategory, setAccountCategory] = useState('commission');
+  const [batchAccount, setBatchAccount] = useState('');
+  const [confirmDefaultVat, setConfirmDefaultVat] = useState(!!initialRun?.confirmDefaultVat);
+  const [feeVatRates, setFeeVatRates] = useState(initialRun?.feeVatRates);
+  const [defaultCommissionVatRate, setDefaultCommissionVatRate] = useState(
+    initialRun?.defaultCommissionVatRate || 0,
+  );
+  const [lineEdits, setLineEdits] = useState(legacyFeesScope ? undefined : initialRun?.lineEdits);
   const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [onlyRetained, setOnlyRetained] = useState(false);
+  const [notice, setNotice] = useState(
+    legacyFeesScope && Object.keys(initialRun?.lineEdits ?? {}).length > 0
+      ? 'Le relevé complet a une nouvelle numérotation. Vérifiez à nouveau les lignes modifiées dans l’ancien extrait.'
+      : '',
+  );
+  const [downloadFormat, setDownloadFormat] = useState<'txt' | 'excel'>('txt');
+  const [confirmDownload, setConfirmDownload] = useState<'excel' | 'file' | 'archive' | null>(null);
   const [phase, setPhase] = useState<4 | 5 | 6>(4);
   const [pdfCollapsed, setPdfCollapsed] = useState(false);
-  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [keywordDraft, setKeywordDraft] = useState<string | null>(
     initialRun?.keywordOverrides?.join('\n') ?? null,
   );
@@ -124,8 +178,28 @@ export function EntryModelResultsWorkspace({
     (matchingModels.length === 1 ? matchingModels[0] : undefined);
   const runModelId = processingModel?.id || '';
   const displayFormat = formats.data?.find(
-    (t) => t.id === (initialOutputTemplateId || processingModel?.outputTemplateId),
+    (t) => t.id === (outputTemplateId || processingModel?.outputTemplateId),
   );
+  const expectsSageColumns =
+    !!balancedScope || !!displayFormat?.output.columns.some((column) => column.field === 'PIECE');
+  const outdatedColumns =
+    !!preview &&
+    ((expectsSageColumns && !preview.output?.columns.some((column) => column.field === 'PIECE')) ||
+      (!!balancedScope &&
+        (!preview.commissionOnlyVat ||
+          preview.rows.some(
+            (row) => row.accountCategory === 'commission' && !('linkedVatId' in row),
+          ))));
+  const accountRows =
+    preview?.rows.filter(
+      (row) =>
+        accountCategory === 'all' ||
+        (accountCategory === 'invalid'
+          ? row.status === 'INVALID'
+          : row.accountCategory === accountCategory),
+    ) || [];
+  const validBatchAccount = /^[A-Za-z0-9]{1,32}$/.test(batchAccount.trim());
+  const issueSummary = summarizeIssues(preview?.errors || []);
   const activeWords =
     keywordDraft === null
       ? processingModel?.keywords || []
@@ -154,13 +228,45 @@ export function EntryModelResultsWorkspace({
     exportTemplateId: formatId,
     abbreviation,
     ...(runModelId ? { modelId: runModelId } : {}),
-    ...(initialOutputTemplateId ? { outputTemplateId: initialOutputTemplateId } : {}),
+    ...(outputTemplateId ? { outputTemplateId } : {}),
     ...(keywordDraft !== null ? { keywordOverrides: activeWords } : {}),
     ...(extractId ? { extractId } : {}),
     decisions,
+    ...(balancedScope
+      ? {
+          balancedScope,
+          counterAccounts,
+          ...(confirmDefaultVat ? { confirmDefaultVat: true } : {}),
+          ...(feeVatRates ? { feeVatRates } : {}),
+          ...(defaultCommissionVatRate ? { defaultCommissionVatRate } : {}),
+          ...(lineEdits ? { lineEdits } : {}),
+        }
+      : {}),
   };
   const inputKey = JSON.stringify(input);
-  const stale = inputKey !== previewKey;
+  const stale = inputKey !== previewKey || outdatedColumns;
+  const lines = preview?.resultRows || [];
+  const vatLines = new Map(
+    lines.filter((row) => row.accountCode === '34552100').map((row) => [row.transactionId, row]),
+  );
+  const debit = lines.reduce((sum, row) => sum + Math.round(Number(row.debitHt) * 100), 0);
+  const credit = lines.reduce((sum, row) => sum + Math.round(Number(row.creditHt) * 100), 0);
+  const unbalanced =
+    debit !== credit || preview?.errors.some((issue) => issue.code === 'UNBALANCED');
+  const incomplete = preview?.rows.some((row) => row.status === 'INVALID');
+  const canFinalize =
+    !!preview &&
+    (preview.canExport ||
+      (can('documents.write') &&
+        preview.errors.length > 0 &&
+        preview.errors.every((issue) => issue.code === 'SOURCE_NOT_VALIDATED')));
+  const canForce =
+    !!preview &&
+    !preview.canExport &&
+    lines.length > 0 &&
+    !preview.errors.some((issue) =>
+      ['TXT_FORMAT', 'BANK_ACCOUNT', 'BANK_JOURNAL', 'CURRENCY', 'LINE_EDIT'].includes(issue.code),
+    );
   const loading = sources.loading || models.loading || detail.loading || formats.loading;
   const failure = error || sources.error || models.error || detail.error || formats.error;
   const canPreview =
@@ -169,9 +275,17 @@ export function EntryModelResultsWorkspace({
     detail.data.clientId === clientId &&
     sources.data?.some((s) => s.id === sourceId) &&
     abbreviations.includes(abbreviation) &&
-    (!processingModel || activeWords.length > 0);
+    (!!balancedScope || activeWords.length > 0);
+  const needsFullPreview = balancedScope === 'all' && !previewKey.includes('"balancedScope":"all"');
   useEffect(() => {
-    if (!guided || !canPreview || loading || busy || preview) return;
+    if (
+      (!guided && !needsFullPreview) ||
+      !canPreview ||
+      loading ||
+      busy ||
+      (preview && !outdatedColumns && !needsFullPreview)
+    )
+      return;
     const controller = new AbortController();
     request<EntryModelPreview>('/accounting/entry-models/preview', {
       method: 'POST',
@@ -188,7 +302,7 @@ export function EntryModelResultsWorkspace({
         if (!controller.signal.aborted) setError(reason.message);
       });
     return () => controller.abort();
-  }, [guided, canPreview, loading, busy, preview, inputKey]);
+  }, [guided, canPreview, loading, busy, preview, inputKey, outdatedColumns, needsFullPreview]);
   function reset() {
     setKeywordDraft(null);
     setDecisions({});
@@ -220,16 +334,14 @@ export function EntryModelResultsWorkspace({
       setBusy(false);
     }
   }
-  async function download(confirmed = false, archiveOnly = false) {
+  async function download(confirmed = false, archiveOnly = false, forced = false) {
     if (busy) return;
     if (!preview || !processingModel) {
       setError('Choisissez une écriture et affichez son résultat avant le téléchargement.');
       return;
     }
     if (stale) {
-      setError(
-        'Les paramètres ont changé. Cliquez sur « Appliquer le filtre » avant le téléchargement.',
-      );
+      setError('Enregistrez les modifications avant de finaliser les écritures.');
       return;
     }
     if (!reviewed && !confirmed) return;
@@ -241,14 +353,13 @@ export function EntryModelResultsWorkspace({
     }
     const needsValidation = preview.errors.some((issue) => issue.code === 'SOURCE_NOT_VALIDATED');
     const blocking = preview.errors.filter((issue) => issue.code !== 'SOURCE_NOT_VALIDATED');
-    if (blocking.length || (!preview.canExport && !needsValidation)) {
+    if (!forced && (blocking.length || (!preview.canExport && !needsValidation))) {
       setError(
-        blocking.map((issue) => issue.message).join(' ') ||
-          'Recalculez le résultat avant le téléchargement.',
+        summarizeIssues(blocking).join(' ') || 'Recalculez le résultat avant le téléchargement.',
       );
       return;
     }
-    if (needsValidation && !can('documents.write')) {
+    if (!forced && needsValidation && !can('documents.write')) {
       setError(
         'Le document doit être validé par un utilisateur autorisé à modifier les documents avant le téléchargement.',
       );
@@ -259,9 +370,9 @@ export function EntryModelResultsWorkspace({
     try {
       const extension =
         preview.output?.fileExtension || processingModel.output?.fileExtension || 'txt';
-      const name = `ecritures_${abbreviation}_${sourceId.replaceAll('-', '').slice(0, 8)}.${extension}`;
+      const name = `ecritures_${abbreviation}_${sourceId.replaceAll('-', '').slice(0, 8)}${forced ? '_A_VERIFIER' : ''}.${extension}`;
       let exportPreview = preview;
-      if (needsValidation) {
+      if (needsValidation && !forced) {
         const validated = await request<StatementDetail>(
           `/statement-imports/${sourceId}/validate`,
           {
@@ -306,6 +417,7 @@ export function EntryModelResultsWorkspace({
           ...input,
           previewFingerprint: exportPreview.fingerprint,
           confirmed: true,
+          forceUnverifiedDownload: forced,
         }),
       });
       if (!response.ok) throw await apiError(response);
@@ -314,9 +426,13 @@ export function EntryModelResultsWorkspace({
       setReviewed(false);
       if (guided) setPhase(6);
       setNotice(
-        archiveOnly
-          ? 'Écritures archivées dans l’espace client avec le modèle et les paramètres utilisés.'
-          : 'Résultat enregistré dans l’espace client et téléchargé.',
+        forced
+          ? archiveOnly
+            ? 'Fichier archivé avec la mention À vérifier.'
+            : 'Téléchargement exceptionnel confirmé. Fichier archivé avec la mention À vérifier.'
+          : archiveOnly
+            ? 'Écritures archivées dans l’espace client avec le modèle et les paramètres utilisés.'
+            : 'Résultat enregistré dans l’espace client et téléchargé.',
       );
       try {
         setPreview(
@@ -355,10 +471,41 @@ export function EntryModelResultsWorkspace({
       CURRENCY: 'currency',
     };
     downloadExcel(
-      `ecritures_${abbreviation}_${sourceId.replaceAll('-', '').slice(0, 8)}.xlsx`,
+      `ecritures_${abbreviation}_${sourceId.replaceAll('-', '').slice(0, 8)}${preview.canExport ? '' : '_A_VERIFIER'}.xlsx`,
       columns.map((column) => column.label),
       preview.resultRows.map((row) =>
-        columns.map((column) => row[values[column.field]] ?? ''),
+        columns.map((column) => {
+          if (column.field === 'JOURNAL') return row.journal ?? row.abbreviation;
+          if (column.field === 'PIECE') return row.pieceNumber ?? row.reference;
+          if (column.field === 'DATE' && row.date) {
+            const [year, month, day] = row.date.slice(0, 10).split('-');
+            const parts: Record<string, string> = {
+              yyyy: year,
+              yy: year.slice(-2),
+              MM: month,
+              dd: day,
+            };
+            return (column.format || preview.output?.dateFormat || 'dd/MM/yyyy').replace(
+              /yyyy|yy|MM|dd/g,
+              (part) => parts[part],
+            );
+          }
+          if (['DEBIT_HT', 'CREDIT_HT', 'NET', 'GROSS', 'TAX', 'RATE'].includes(column.field)) {
+            const amount = row[values[column.field]];
+            if (
+              amount != null &&
+              Number.isFinite(Number(amount)) &&
+              String(amount)
+                .replace(/[^0-9]/g, '')
+                .replace(/^0+/, '').length <= 15
+            )
+              return Number(amount);
+          }
+          return row[values[column.field]] ?? '';
+        }),
+      ),
+      columns.flatMap((column, index) =>
+        ['DEBIT_HT', 'CREDIT_HT'].includes(column.field) ? [index] : [],
       ),
     );
     setNotice('Le fichier Excel des écritures a été téléchargé.');
@@ -374,13 +521,10 @@ export function EntryModelResultsWorkspace({
     setError('');
     setNotice('');
     try {
-      const validated = await request<StatementDetail>(
-        `/statement-imports/${sourceId}/validate`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ version: preview.sourceVersion }),
-        },
-      );
+      const validated = await request<StatementDetail>(`/statement-imports/${sourceId}/validate`, {
+        method: 'POST',
+        body: JSON.stringify({ version: preview.sourceVersion }),
+      });
       detail.reload();
       if (validated.status !== 'VALIDATED' || validated.errors.length) {
         throw new Error(
@@ -407,30 +551,122 @@ export function EntryModelResultsWorkspace({
     preview?.rows.filter((r) => r.status === 'AMBIGUOUS' || r.status === 'INVALID').length || 0;
   const excluded =
     preview?.rows.filter((r) => r.status === 'UNMATCHED' || r.status === 'EXCLUDED').length || 0;
-  const visible = preview?.rows.filter((r) => !onlyRetained || r.status === 'MATCHED') || [];
   const resultRows = preview?.rows.filter((r) => r.status === 'MATCHED') || [];
-  const analysisRows =
-    preview?.resultRows ||
-    resultRows.map((row) => ({ gross: row.total, net: row.net, tax: row.tax }));
-  const totals = analysisRows.reduce<{ gross: number; net: number; tax: number }>(
-    (sum, row) => ({
-      gross: sum.gross + Math.round(Number(row.gross || 0) * 100),
-      net: sum.net + Math.round(Number(row.net || 0) * 100),
-      tax: sum.tax + Math.round(Number(row.tax || 0) * 100),
-    }),
-    { gross: 0, net: 0, tax: 0 },
-  );
   const resultBank =
     sources.data?.find((s) => s.id === preview?.statementId)?.bankName ||
     (detail.data?.id === preview?.statementId ? detail.data?.statement.bankName : '') ||
     '—';
-  function decision(row: EntryModelRow, value: string) {
-    setDecisions({ ...decisions, [row.transactionId]: value === '__exclude__' ? null : value });
-    setReviewed(false);
-    if (guided) setPhase(5);
+  const [movement, setMovement] = useState<StatementTransaction | null>(null);
+  const sourceMovement = detail.data?.statement.transactions.find((row) => row.id === movement?.id);
+  const movementChanged = !!movement && JSON.stringify(movement) !== JSON.stringify(sourceMovement);
+  useUnsavedChanges(movementChanged);
+
+  async function saveValues(event: React.FormEvent) {
+    event.preventDefault();
+    const source = detail.data;
+    if (
+      !source ||
+      !movement ||
+      !sourceMovement ||
+      !movementChanged ||
+      busy ||
+      extractId ||
+      !can('documents.write')
+    )
+      return;
+    const amount = (value: StatementTransaction['debit']) =>
+      String(value ?? '')
+        .trim()
+        .replace(',', '.');
+    const debitValue = amount(movement.debit);
+    const creditValue = amount(movement.credit);
+    const valid = (value: string) => /^\d{1,15}(?:\.\d{1,2})?$/.test(value) && Number(value) > 0;
+    if (
+      !(
+        (valid(debitValue) && (!creditValue || Number(creditValue) === 0)) ||
+        (valid(creditValue) && (!debitValue || Number(debitValue) === 0))
+      )
+    ) {
+      setError(
+        'Renseignez un seul montant positif, au débit ou au crédit, avec deux décimales au maximum.',
+      );
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const saved = await request<StatementDetail>(
+        `/statement-imports/${source.id}?version=${source.version}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            ...source.statement,
+            transactions: source.statement.transactions.map((row) =>
+              row.id === movement.id
+                ? {
+                    ...movement,
+                    debit: valid(debitValue) ? debitValue : null,
+                    credit: valid(creditValue) ? creditValue : null,
+                    amount: null,
+                    direction: null,
+                  }
+                : row,
+            ),
+          }),
+        },
+      );
+      setMovement(saved.statement.transactions.find((row) => row.id === movement.id) || null);
+      setReviewed(false);
+      setPreview(null);
+      setPreviewKey('');
+      detail.reload();
+      const result = await request<EntryModelPreview>('/accounting/entry-models/preview', {
+        method: 'POST',
+        body: inputKey,
+      });
+      setPreview(result);
+      setPreviewKey(inputKey);
+      setNotice('Valeurs enregistrées. Les écritures ont été recalculées.');
+      if (guided) setPhase(5);
+    } catch (cause) {
+      setError((cause as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
   return (
     <div className="entry-model-results-workspace">
+      {confirmDownload && (
+        <BankDialog
+          title={
+            confirmDownload === 'archive' ? 'Confirmer l’archivage' : 'Confirmer le téléchargement'
+          }
+          onClose={() => setConfirmDownload(null)}
+        >
+          <p>
+            {unbalanced ? 'L’écriture est non équilibrée.' : 'La vérification est incomplète.'} Le
+            fichier contiendra les lignes affichées et portera la mention « À vérifier ».
+            {confirmDownload !== 'excel' && ' Il sera archivé dans l’espace client.'}
+          </p>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmDownload(null)}>
+              Annuler
+            </Button>
+            <Button
+              permission="documents.export"
+              disabled={busy || stale}
+              onClick={() => {
+                setConfirmDownload(null);
+                if (confirmDownload === 'excel') downloadExcelResult();
+                else void download(true, confirmDownload === 'archive', true);
+              }}
+            >
+              {confirmDownload === 'archive' ? 'Confirmer et archiver' : 'Confirmer et télécharger'}
+            </Button>
+          </div>
+        </BankDialog>
+      )}
       {guided && detail.data && (
         <EntrySourceSummary
           detail={detail.data}
@@ -472,14 +708,366 @@ export function EntryModelResultsWorkspace({
               {abbreviation} · {displayFormat?.name || processingModel?.name}
             </span>
           </div>
-          <p className="muted text-sm mt-2">
-            {phase === 4
-              ? 'Contrôlez les libellés et les montants HT calculés à partir du TTC.'
-              : phase === 5
-                ? 'Confirmez les correspondances ou excluez les mouvements à ne pas exporter.'
-                : 'Le fichier a été téléchargé et archivé dans l’espace client.'}
-          </p>
         </section>
+      )}
+      <section className="ui-card">
+        <label>
+          Format Sage 100 équilibré
+          <select
+            className="ui-input mt-2"
+            value={balancedScope}
+            disabled={busy}
+            onChange={(event) => {
+              setBalancedScope(event.target.value === 'all' ? 'all' : '');
+              setReviewed(false);
+            }}
+          >
+            <option value="">Format d’écriture sélectionné</option>
+            <option value="all">Tous les mouvements du relevé ou de l’extrait</option>
+          </select>
+        </label>
+        {balancedScope && (
+          <div className="mt-3 space-y-3">
+            <fieldset className="rounded-xl border bg-muted/20 p-4" disabled={busy}>
+              <legend className="px-1 text-sm font-semibold">Application de la TVA</legend>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {[
+                  {
+                    all: true,
+                    label: 'Toutes les commissions',
+                    description: 'Reprendre la TVA vérifiée du relevé au compte 34552100.',
+                  },
+                  {
+                    all: false,
+                    label: 'Par ligne',
+                    description: 'Choisir la TVA ou le taux directement sur chaque commission.',
+                  },
+                ].map((mode) => (
+                  <label
+                    key={mode.label}
+                    className={`flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm ${confirmDefaultVat === mode.all ? 'border-primary bg-card' : 'bg-card'}`}
+                  >
+                    <input
+                      type="radio"
+                      name="commission-vat-mode"
+                      className="mt-1 accent-primary"
+                      checked={confirmDefaultVat === mode.all}
+                      onChange={() => {
+                        setConfirmDefaultVat(mode.all);
+                        if (!mode.all) setDefaultCommissionVatRate(0);
+                        setReviewed(false);
+                      }}
+                    />
+                    <span>
+                      <strong className="block">{mode.label}</strong>
+                      <span className="muted mt-1 block">{mode.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {(confirmDefaultVat || defaultCommissionVatRate > 0) && (
+                <div className="mt-3">
+                  <label className="block max-w-md text-sm">
+                    Taux de TVA inclus dans le total des commissions
+                    <select
+                      className="ui-input mt-1"
+                      value={defaultCommissionVatRate}
+                      disabled={busy}
+                      onChange={(event) => {
+                        setDefaultCommissionVatRate(Number(event.target.value));
+                        setReviewed(false);
+                      }}
+                    >
+                      <option value={0}>Aucun calcul automatique</option>
+                      {[7, 10, 14, 20].map((rate) => (
+                        <option key={rate} value={rate}>
+                          {rate} % · TVA incluse
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </fieldset>
+            <div id="entry-accounts" className="space-y-3 rounded-xl border p-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="min-w-40 flex-1 text-sm">
+                  Catégorie
+                  <select
+                    className="ui-input mt-1"
+                    value={accountCategory}
+                    onChange={(event) => {
+                      setAccountCategory(event.target.value);
+                      setBatchAccount('');
+                    }}
+                  >
+                    {accountCategories.map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label} (
+                        {preview?.rows.filter(
+                          (row) =>
+                            key === 'all' ||
+                            (key === 'invalid'
+                              ? row.status === 'INVALID'
+                              : row.accountCategory === key),
+                        ).length ?? 0}
+                        )
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="min-w-36 flex-1 text-sm">
+                  Compte à appliquer au lot
+                  <input
+                    className="ui-input mt-1"
+                    value={batchAccount}
+                    maxLength={32}
+                    onChange={(event) => setBatchAccount(event.target.value)}
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || !accountRows.length || !validBatchAccount}
+                  onClick={() => {
+                    setCounterAccounts((current) => ({
+                      ...current,
+                      ...Object.fromEntries(
+                        accountRows.map((row) => [row.transactionId, batchAccount.trim()]),
+                      ),
+                    }));
+                    setReviewed(false);
+                  }}
+                >
+                  Appliquer à {accountRows.length} ligne(s)
+                </Button>
+              </div>
+              {accountRows.length ? (
+                <div className="max-h-80 overflow-auto rounded-lg border">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-card text-left">
+                      <tr>
+                        <th className="p-2">Ligne</th>
+                        <th className="p-2">Libellé</th>
+                        <th className="p-2 text-right">Montant</th>
+                        <th className="p-2">Compte</th>
+                        <th className="p-2">TVA de la commission</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accountRows.map((row) => {
+                        const selectedRate =
+                          feeVatRates?.[row.transactionId] ?? defaultCommissionVatRate;
+                        const vatLine = row.linkedVatId ? vatLines.get(row.linkedVatId) : undefined;
+                        const appliedVat =
+                          vatLine?.sequence === row.sequence
+                            ? Number(vatLine.debitHt) + Number(vatLine.creditHt)
+                            : null;
+                        return (
+                          <tr key={row.transactionId} className="border-t">
+                            <td className="p-2">{row.sequence}</td>
+                            <td className="p-2">{row.description}</td>
+                            <td className="p-2 text-right whitespace-nowrap">
+                              {row.total == null ? 'À vérifier' : money(row.total)}
+                            </td>
+                            <td className="w-36 p-2">
+                              <input
+                                aria-label={`Compte de contrepartie ligne ${row.sequence}`}
+                                className="ui-input min-w-24"
+                                maxLength={32}
+                                disabled={busy}
+                                value={
+                                  counterAccounts[row.transactionId] ?? row.counterAccount ?? ''
+                                }
+                                onChange={(event) => {
+                                  setCounterAccounts((current) => ({
+                                    ...current,
+                                    [row.transactionId]: event.target.value,
+                                  }));
+                                  setReviewed(false);
+                                }}
+                              />
+                            </td>
+                            <td className="p-2">
+                              {(confirmDefaultVat || selectedRate > 0) && row.linkedVatId ? (
+                                <span className="whitespace-nowrap">
+                                  {counterAccounts[row.linkedVatId] &&
+                                  counterAccounts[row.linkedVatId] !== '34552100'
+                                    ? `Compte ${counterAccounts[row.linkedVatId]}`
+                                    : 'TVA du relevé'}{' '}
+                                  · {money(row.linkedVatAmount ?? null)}
+                                </span>
+                              ) : row.linkedVatId ? (
+                                <label className="flex min-w-36 items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    disabled={busy || confirmDefaultVat}
+                                    checked={
+                                      (counterAccounts[row.linkedVatId] ??
+                                        (confirmDefaultVat ? '34552100' : '')) === '34552100'
+                                    }
+                                    onChange={(event) => {
+                                      const id = row.linkedVatId!;
+                                      const checked = event.target.checked;
+                                      setCounterAccounts((current) => {
+                                        const next = { ...current };
+                                        if (checked) next[id] = '34552100';
+                                        else delete next[id];
+                                        return next;
+                                      });
+                                      setReviewed(false);
+                                    }}
+                                  />
+                                  TVA du relevé · {money(row.linkedVatAmount ?? null)}
+                                </label>
+                              ) : null}
+                              {(row.accountCategory === 'commission' ||
+                                row.accountCategory === 'mixed') &&
+                                (!confirmDefaultVat || !!row.linkedVatId) && (
+                                  <select
+                                    className="ui-input mt-1 min-w-32"
+                                    aria-label={`Taux de TVA inclus ligne ${row.sequence}`}
+                                    disabled={busy}
+                                    value={feeVatRates?.[row.transactionId] ?? ''}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      setFeeVatRates((current) => {
+                                        const next = { ...current };
+                                        if (value === '') delete next[row.transactionId];
+                                        else next[row.transactionId] = Number(value);
+                                        return next;
+                                      });
+                                      setReviewed(false);
+                                    }}
+                                  >
+                                    <option value="">
+                                      {defaultCommissionVatRate
+                                        ? `Taux global · ${defaultCommissionVatRate} %`
+                                        : 'Selon le relevé'}
+                                    </option>
+                                    <option value={0}>Selon le relevé uniquement</option>
+                                    {[7, 10, 14, 20].map((rate) => (
+                                      <option key={rate} value={rate}>
+                                        TTC · {rate} %
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              {appliedVat !== null &&
+                                appliedVat !== Number(row.linkedVatAmount) && (
+                                  <div className="mt-1 whitespace-nowrap text-sm font-medium">
+                                    TVA recalculée · {money(appliedVat)}
+                                  </div>
+                                )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted text-sm">Aucun mouvement dans cette catégorie.</p>
+              )}
+            </div>
+            <Button
+              id="entry-save-parameters"
+              disabled={busy || loading || !canPreview}
+              onClick={() => void inspect()}
+            >
+              Enregistrer et recalculer les écritures
+            </Button>
+          </div>
+        )}
+      </section>
+      {detail.data && can('documents.write') && (
+        <details className="ui-card">
+          <summary className="cursor-pointer font-semibold">Modifier les valeurs du relevé</summary>
+          {extractId ? (
+            <Link
+              className="mt-3 inline-block underline"
+              href={`/conversions?statementId=${sourceId}&extractId=${extractId}&step=result`}
+            >
+              Ouvrir l’éditeur de l’extrait
+            </Link>
+          ) : (
+            <form className="mt-3 space-y-3" onSubmit={(event) => void saveValues(event)}>
+              <label className="block text-sm">
+                Mouvement
+                <select
+                  className="ui-input mt-1"
+                  value={movement?.id || ''}
+                  disabled={busy}
+                  onChange={(event) => {
+                    if (
+                      movementChanged &&
+                      !window.confirm('Abandonner les corrections non enregistrées ?')
+                    )
+                      return;
+                    setMovement(
+                      detail.data?.statement.transactions.find(
+                        (row) => row.id === event.target.value,
+                      ) || null,
+                    );
+                  }}
+                >
+                  <option value="">Choisir un mouvement…</option>
+                  {detail.data.statement.transactions.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.sequence} · {row.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {movement && (
+                <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm">
+                    Date
+                    <input
+                      className="ui-input mt-1"
+                      required
+                      type="date"
+                      value={movement.date || ''}
+                      onChange={(event) => setMovement({ ...movement, date: event.target.value })}
+                    />
+                  </label>
+                  <label className="text-sm">
+                    Libellé
+                    <input
+                      className="ui-input mt-1"
+                      required
+                      value={movement.description || ''}
+                      onChange={(event) =>
+                        setMovement({ ...movement, description: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="text-sm">
+                    Débit
+                    <input
+                      className="ui-input mt-1"
+                      inputMode="decimal"
+                      value={movement.debit ?? ''}
+                      onChange={(event) => setMovement({ ...movement, debit: event.target.value })}
+                    />
+                  </label>
+                  <label className="text-sm">
+                    Crédit
+                    <input
+                      className="ui-input mt-1"
+                      inputMode="decimal"
+                      value={movement.credit ?? ''}
+                      onChange={(event) => setMovement({ ...movement, credit: event.target.value })}
+                    />
+                  </label>
+                </fieldset>
+              )}
+              <Button type="submit" disabled={!movementChanged || busy}>
+                Enregistrer les valeurs
+              </Button>
+            </form>
+          )}
+        </details>
       )}
       {!sources.loading && !sources.error && sources.data?.length === 0 && (
         <section className="ui-card entry-model-empty">
@@ -628,10 +1216,31 @@ export function EntryModelResultsWorkspace({
                     </select>
                   </label>
                   <label>
-                    Modèle d’écritures
+                    Modèle d’exportation des écritures
                     <select
                       className="ui-input mt-2"
-                      aria-label="Modèle d’écritures"
+                      disabled={busy || formats.loading}
+                      value={outputTemplateId}
+                      onChange={(e) => {
+                        setOutputTemplateId(e.target.value);
+                        setReviewed(false);
+                      }}
+                    >
+                      <option value="">Format enregistré dans la règle</option>
+                      {formats.data
+                        ?.filter((t) => t.active || t.id === outputTemplateId)
+                        .map((t) => (
+                          <option key={t.id} value={t.id} disabled={!t.active}>
+                            {t.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label>
+                    Règle comptable du client
+                    <select
+                      className="ui-input mt-2"
+                      aria-label="Règle comptable du client"
                       value={processingModel?.id || ''}
                       disabled={busy || models.loading}
                       onChange={(e) => {
@@ -642,7 +1251,7 @@ export function EntryModelResultsWorkspace({
                         reset();
                       }}
                     >
-                      <option value="">Choisir un modèle du client…</option>
+                      <option value="">Choisir une règle du client…</option>
                       {eligible.map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.abbreviation} · {t.name} · TVA {t.taxRate} %
@@ -708,14 +1317,16 @@ export function EntryModelResultsWorkspace({
               !models.error &&
               !eligible.length && (
                 <p className="conversion-alert warning mt-4">
-                  Aucun modèle actif pour ce compte.{' '}
-                  <Link className="underline" href={`/entry-models?clientId=${clientId}`}>
-                    Configurer les modèles
+                  Aucune règle active pour ce compte.{' '}
+                  <Link
+                    className="underline"
+                    href={`/conversions?type=accounting&step=model&statementId=${sourceId}${outputTemplateId ? '&outputTemplateId=' + outputTemplateId : ''}${extractId ? '&extractId=' + extractId : ''}`}
+                  >
+                    Configurer la règle de ce document
                   </Link>
                 </p>
               )}
             <div className="entry-model-actions mt-5">
-              <p className="muted text-sm">Seuls les mouvements correspondants sont retenus.</p>
               <Button disabled={!canPreview || busy || loading} onClick={() => void inspect()}>
                 <Search size={16} /> {busy ? 'Traitement…' : 'Appliquer le filtre'}
               </Button>
@@ -761,12 +1372,6 @@ export function EntryModelResultsWorkspace({
                   <strong>{excluded}</strong>
                 </div>
               </div>
-              {stale && (
-                <p role="status" className="conversion-alert warning">
-                  Les choix ont changé. Cliquez sur « Appliquer le filtre » pour recalculer l’aperçu
-                  avant l’export.
-                </p>
-              )}
               <section
                 className="ui-card entry-model-review"
                 aria-labelledby="entry-model-output-title"
@@ -776,53 +1381,50 @@ export function EntryModelResultsWorkspace({
                     <h2 id="entry-model-output-title" className="font-semibold">
                       Résultat des écritures
                     </h2>
-                    {displayFormat && (
-                      <p className="text-sm font-medium text-primary mt-2">
-                        Modèle d’affichage : {displayFormat.name}
-                      </p>
-                    )}
-                    <p className="muted text-sm mt-2">Montants HT après déduction de la TVA.</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="ui-tag">{resultRows.length} mouvement(s)</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      aria-expanded={analysisOpen}
-                      aria-controls="entry-analysis"
-                      onClick={() => {
-                        setAnalysisOpen(!analysisOpen);
-                        if (!analysisOpen) {
-                          requestAnimationFrame(() =>
-                            document.getElementById('entry-analysis')?.scrollIntoView({
-                              behavior: window.matchMedia('(prefers-reduced-motion: reduce)')
-                                .matches
-                                ? 'instant'
-                                : 'smooth',
-                              block: 'start',
-                            }),
-                          );
-                        }
-                      }}
-                    >
-                      <ChartNoAxesCombined size={16} /> Analyse
-                    </Button>
+                    <span className="ui-tag">
+                      {balancedScope
+                        ? `${resultRows.length} / ${preview.rows.length} mouvements comptabilisés`
+                        : `${resultRows.length} mouvement(s)`}
+                    </span>
                   </div>
                 </div>
-                {error && (
-                  <p className="conversion-alert error" role="alert">
-                    {error}
-                  </p>
-                )}
-                {preview.errors.length > 0 && !error && (
-                  <p className="muted text-sm" role="status">
-                    {preview.errors.every((issue) => issue.code === 'SOURCE_NOT_VALIDATED')
-                      ? 'Terminer et télécharger valide le document source et archive le résultat.'
-                      : preview.errors.map((issue) => issue.message).join(' ')}
-                  </p>
+                {issueSummary.length > 0 && (
+                  <details className="my-3 rounded-lg border px-3 py-2 text-sm">
+                    <summary className="cursor-pointer font-medium">
+                      Vérifications à effectuer · {issueSummary.length}
+                    </summary>
+                    <ul className="mt-2 list-disc space-y-1 pl-5">
+                      {issueSummary.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
                 {preview.output && preview.resultRows ? (
-                  <EntryResultTable output={preview.output} rows={preview.resultRows} />
+                  <EntryResultTable
+                    output={preview.output}
+                    rows={preview.resultRows}
+                    showEmpty={false}
+                    editing={
+                      balancedScope && can('documents.write')
+                        ? {
+                            drafts: lineEdits || {},
+                            busy: busy || loading || !canPreview,
+                            change: (index, draft) => {
+                              setLineEdits((current) => ({ ...current, [index]: draft }));
+                              setReviewed(false);
+                            },
+                            reset: () => {
+                              setLineEdits(undefined);
+                              setReviewed(false);
+                            },
+                            save: () => void inspect(),
+                          }
+                        : undefined
+                    }
+                  />
                 ) : (
                   <div className="entry-model-table-wrap">
                     <table
@@ -863,138 +1465,126 @@ export function EntryModelResultsWorkspace({
                     </table>
                   </div>
                 )}
-                {!resultRows.length && (
-                  <p className="muted text-sm" role="status">
-                    {ambiguous > 0
-                      ? 'Vérifiez les correspondances ci-dessous pour afficher les montants calculés.'
-                      : 'Aucun mouvement retenu pour ce modèle.'}
-                  </p>
+                {balancedScope && preview.rows.some((row) => row.status === 'INVALID') && (
+                  <a
+                    href="#entry-accounts"
+                    className="mt-3 inline-block underline"
+                    onClick={() => {
+                      setAccountCategory('invalid');
+                      setBatchAccount('');
+                    }}
+                  >
+                    Corriger les mouvements dans le tableau des comptes
+                  </a>
                 )}
-              </section>
-              <section
-                id="entry-analysis"
-                className="ui-card entry-model-result-details"
-                hidden={!analysisOpen && ambiguous === 0}
-              >
-                <div className="entry-model-toolbar">
-                  <h2 className="font-semibold">Analyse des montants</h2>
-                  <span className="ui-tag">{resultRows.length} mouvements retenus</span>
-                </div>
-                <dl className="entry-analysis-totals">
-                  <div>
-                    <dt>Total TTC</dt>
-                    <dd>{money(totals.gross / 100)}</dd>
-                  </div>
-                  <div>
-                    <dt>Total HT</dt>
-                    <dd>{money(totals.net / 100)}</dd>
-                  </div>
-                  <div>
-                    <dt>TVA</dt>
-                    <dd>{money(totals.tax / 100)}</dd>
-                  </div>
-                </dl>
-                <div className="entry-model-review mt-4">
-                  <div className="entry-model-toolbar">
-                    <h2 className="font-semibold">Vérification des libellés et de la taxe</h2>
-                    <label className="entry-model-check">
-                      <input
-                        type="checkbox"
-                        checked={onlyRetained}
-                        onChange={(e) => setOnlyRetained(e.target.checked)}
-                      />{' '}
-                      Mouvements retenus uniquement
-                    </label>
-                  </div>
-                  <div className="entry-model-table-wrap">
-                    <table className="entry-model-results-table">
-                      <thead>
-                        <tr>
-                          <th>Date</th>
-                          <th>Libellé original</th>
-                          <th>Modèle / correspondances</th>
-                          <th className="amount">TTC</th>
-                          <th className="amount">HT</th>
-                          <th className="amount">TVA</th>
-                          <th>Statut</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visible.map((row) => (
-                          <tr key={row.transactionId}>
-                            <td data-label="Date">{date(row.date)}</td>
-                            <td data-label="Libellé original">
-                              {row.description}
-                              <p className="entry-model-row-note">{row.message}</p>
-                            </td>
-                            <td data-label="Modèle">
-                              {row.candidates.length > 0 ? (
-                                <>
-                                  <select
-                                    className="ui-input"
-                                    aria-label={`Modèle pour la ligne ${row.sequence}`}
-                                    disabled={busy}
-                                    value={
-                                      row.transactionId in decisions
-                                        ? decisions[row.transactionId] || '__exclude__'
-                                        : row.modelId || ''
-                                    }
-                                    onChange={(e) => decision(row, e.target.value)}
-                                  >
-                                    <option value="" disabled>
-                                      Choisir après vérification…
-                                    </option>
-                                    {row.candidates.map((c) => (
-                                      <option key={c.id} value={c.id}>
-                                        {c.name} · {c.accountCode} · {c.taxRate} %
-                                      </option>
-                                    ))}
-                                    <option value="__exclude__">Exclure ce mouvement</option>
-                                  </select>
-                                  <p className="entry-model-row-note">
-                                    Mots trouvés :{' '}
-                                    {[...new Set(row.candidates.flatMap((c) => c.keywords))].join(
-                                      ', ',
-                                    )}
-                                  </p>
-                                </>
-                              ) : (
-                                '—'
-                              )}
-                            </td>
-                            <td data-label="TTC" className="amount">
-                              {money(row.total)}
-                            </td>
-                            <td data-label="HT" className="amount">
-                              {money(row.net)}
-                            </td>
-                            <td data-label="TVA" className="amount">
-                              {money(row.tax)}
-                            </td>
-                            <td data-label="Statut">
-                              <span
-                                className={row.status === 'MATCHED' ? 'status-positive' : 'ui-tag'}
-                              >
-                                {row.status === 'MATCHED'
-                                  ? 'Retenu'
-                                  : row.status === 'AMBIGUOUS'
-                                    ? 'Correspondances multiples'
-                                    : row.status === 'INVALID'
-                                      ? 'À corriger'
-                                      : row.status === 'EXCLUDED'
-                                        ? 'Exclu'
-                                        : 'Sans correspondance'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {!visible.length && (
-                    <p className="muted text-sm">Aucun mouvement dans cette vue.</p>
+                {!(preview.resultRows?.length || resultRows.length) &&
+                  (!balancedScope || !preview.rows.some((row) => row.status === 'INVALID')) && (
+                    <p className="muted text-sm" role="status">
+                      Aucun mouvement retenu pour ce modèle.
+                    </p>
                   )}
-                </div>
+                <section className="entry-completion-bar" aria-label="Finaliser le traitement">
+                  {balancedScope && (
+                    <div className="entry-completion-summary" role="status">
+                      <p>
+                        Débit {money((debit / 100).toFixed(2))} · Crédit{' '}
+                        {money((credit / 100).toFixed(2))}
+                      </p>
+                      <strong>
+                        {stale
+                          ? 'Modifications à enregistrer'
+                          : !lines.length
+                            ? 'Aucune pièce à vérifier'
+                            : unbalanced
+                              ? 'Écriture non équilibrée'
+                              : incomplete
+                                ? 'Pièces affichées équilibrées · résultat incomplet'
+                                : 'Pièces équilibrées'}
+                      </strong>
+                    </div>
+                  )}
+                  {balancedScope && stale && (
+                    <a href="#entry-save-parameters" className="inline-block underline">
+                      Aller à l’enregistrement des modifications
+                    </a>
+                  )}
+                  <div className="entry-completion-actions">
+                    <Button
+                      permission="documents.export"
+                      variant="outline"
+                      size="sm"
+                      disabled={busy || loading || stale || (!canForce && !canFinalize)}
+                      onClick={() =>
+                        canForce ? setConfirmDownload('archive') : void download(true, true)
+                      }
+                    >
+                      <Archive size={16} /> Terminer et archiver
+                    </Button>
+                    {can('documents.export') && (
+                      <div
+                        className="flex flex-wrap items-center gap-2"
+                        role="group"
+                        aria-label="Téléchargement"
+                      >
+                        <select
+                          aria-label="Format du téléchargement"
+                          className="ui-input"
+                          style={{ width: 'auto' }}
+                          value={downloadFormat}
+                          disabled={busy}
+                          onChange={(event) =>
+                            setDownloadFormat(event.target.value === 'excel' ? 'excel' : 'txt')
+                          }
+                        >
+                          <option value="txt">
+                            {preview.output?.fileExtension?.toUpperCase() || 'TXT'}
+                          </option>
+                          <option value="excel">Excel</option>
+                        </select>
+                        <Button
+                          permission="documents.export"
+                          disabled={
+                            busy ||
+                            loading ||
+                            stale ||
+                            (downloadFormat === 'excel'
+                              ? !lines.length ||
+                                !preview.output?.columns.some((column) => column.export)
+                              : !canForce && !canFinalize)
+                          }
+                          size="sm"
+                          onClick={() => {
+                            if (downloadFormat === 'excel') {
+                              if (preview.canExport) downloadExcelResult();
+                              else setConfirmDownload('excel');
+                            } else if (canForce) setConfirmDownload('file');
+                            else void download(true, false);
+                          }}
+                        >
+                          <Download size={16} /> Télécharger
+                        </Button>
+                      </div>
+                    )}
+                    {detail.data?.status === 'VALIDATED' ? (
+                      <span
+                        className="status-positive inline-flex items-center gap-2"
+                        role="status"
+                      >
+                        <CheckCircle2 size={16} /> Vérification confirmée
+                      </span>
+                    ) : (
+                      <Button
+                        permission="documents.write"
+                        variant="outline"
+                        size="sm"
+                        disabled={busy || loading || stale || !preview || !can('documents.write')}
+                        onClick={() => void confirmVerification()}
+                      >
+                        {busy ? 'Confirmation…' : 'Confirmer la vérification'}
+                      </Button>
+                    )}
+                  </div>
+                </section>
               </section>
               {preview.lines.length > 0 && (
                 <details className="ui-card entry-model-result-details">
@@ -1031,63 +1621,6 @@ export function EntryModelResultsWorkspace({
                   </div>
                 </details>
               )}
-              <section
-                className="ui-card entry-completion-bar"
-                aria-label="Finaliser le traitement"
-              >
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => (guided ? onNavigate?.(2) : window.history.back())}
-                >
-                  <ArrowLeft size={16} /> Retour
-                </Button>
-                <p className="muted text-sm">Le fichier sera archivé dans l’espace client.</p>
-                <Button
-                  permission="documents.export"
-                  disabled={busy || loading || stale || ambiguous > 0 || !resultRows.length}
-                  variant="outline"
-                  onClick={() => void download(true, true)}
-                >
-                  <Archive size={16} /> {busy ? 'Traitement…' : 'Terminer et archiver'}
-                </Button>
-                <Button
-                  permission="documents.export"
-                  variant="outline"
-                  disabled={
-                    busy ||
-                    loading ||
-                    stale ||
-                    ambiguous > 0 ||
-                    !resultRows.length ||
-                    !preview?.output?.columns.some((column) => column.export)
-                  }
-                  onClick={downloadExcelResult}
-                >
-                  <Download size={16} /> Télécharger Excel
-                </Button>
-                <Button
-                  permission="documents.export"
-                  disabled={busy || loading || stale || ambiguous > 0 || !resultRows.length}
-                  onClick={() => void download(true, false)}
-                >
-                  <Download size={16} /> {busy ? 'Traitement…' : 'Terminer et télécharger'}
-                </Button>
-                {detail.data?.status === 'VALIDATED' ? (
-                  <span className="status-positive inline-flex items-center gap-2" role="status">
-                    <CheckCircle2 size={16} /> Vérification confirmée
-                  </span>
-                ) : (
-                  <Button
-                    permission="documents.write"
-                    variant="outline"
-                    disabled={busy || loading || stale || !preview || !can('documents.write')}
-                    onClick={() => void confirmVerification()}
-                  >
-                    {busy ? 'Confirmation…' : 'Confirmer la vérification'}
-                  </Button>
-                )}
-              </section>
             </>
           )}
         </div>

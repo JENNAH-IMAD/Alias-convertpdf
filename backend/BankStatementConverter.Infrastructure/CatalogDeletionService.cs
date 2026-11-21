@@ -36,7 +36,13 @@ public class CatalogDeletionService(AppDbContext db)
     public async Task DeleteAsync(string resource, Guid id, string version, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlRawAsync("LOCK TABLE \"Documents\", \"BankAccounts\", \"Clients\", \"Banks\" IN SHARE ROW EXCLUSIVE MODE", ct);
+        await db.Database.ExecuteSqlRawAsync(db.Database.IsSqlServer() ? """
+            DECLARE @rows bigint;
+            SELECT @rows=COUNT_BIG(*) FROM Documents WITH (TABLOCKX,HOLDLOCK);
+            SELECT @rows=COUNT_BIG(*) FROM BankAccounts WITH (TABLOCKX,HOLDLOCK);
+            SELECT @rows=COUNT_BIG(*) FROM Clients WITH (TABLOCKX,HOLDLOCK);
+            SELECT @rows=COUNT_BIG(*) FROM Banks WITH (TABLOCKX,HOLDLOCK);
+            """ : "LOCK TABLE \"Documents\", \"BankAccounts\", \"Clients\", \"Banks\" IN SHARE ROW EXCLUSIVE MODE", ct);
         var plan = await Load(resource, id, ct);
         if (Describe(plan).Version != version)
             throw new AppException(409, "Les éléments liés ont changé. Rouvrez la confirmation.");

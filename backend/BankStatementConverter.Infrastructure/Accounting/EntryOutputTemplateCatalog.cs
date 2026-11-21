@@ -10,8 +10,24 @@ public sealed class EntryOutputTemplateCatalog(AppDbContext db)
 {
     public static readonly Guid DefaultId = Guid.Parse("9d2e4a78-fb36-4820-9c04-87b370743915");
     private static readonly JsonSerializerOptions Json = StatementJson.CreateOptions();
-    public static EntryModelOutput Output(EntryOutputTemplate item) => JsonSerializer.Deserialize<EntryModelOutput>(item.OutputJson, Json) ?? new();
-    private static EntryOutputTemplateDto Dto(EntryOutputTemplate item) => new(item.Id, item.Name, item.Description, item.Active, item.Version, Output(item));
+    private static bool IsLegacyDefault(EntryOutputTemplate item, EntryModelOutput output) =>
+        item.Id == DefaultId && output.FileExtension == "txt" && output.Encoding == "utf-8"
+        && output.Delimiter == ";" && output.Columns.Count == 7
+        && output.Columns.Select(c => c.Field).ToHashSet().SetEquals(["ACCOUNT", "TITLE", "DESCRIPTION", "BANK", "DATE", "DEBIT_HT", "CREDIT_HT"]);
+
+    public static EntryModelOutput Output(EntryOutputTemplate item)
+    {
+        var output = JsonSerializer.Deserialize<EntryModelOutput>(item.OutputJson, Json) ?? new();
+        return IsLegacyDefault(item, output) ? BalancedBankEntries.Format : output;
+    }
+    private static EntryOutputTemplateDto Dto(EntryOutputTemplate item)
+    {
+        var output = Output(item);
+        var description = EntryModelTextExport.IsAlignedSage(output)
+            ? "Journal, date, compte, numéro de pièce, libellé, débit et crédit. TXT aligné sans en-tête."
+            : item.Description;
+        return new(item.Id, item.Name, description, item.Active, item.Version, output);
+    }
     public async Task<IReadOnlyList<EntryOutputTemplateDto>> List(CancellationToken ct) => (await db.EntryOutputTemplates.AsNoTracking().OrderBy(t => t.Name).ToArrayAsync(ct)).Select(Dto).ToArray();
     public async Task<(byte[] Content, string Mime, string Name)> Structure(Guid id, CancellationToken ct)
     {
@@ -50,7 +66,13 @@ public sealed class EntryOutputTemplateCatalog(AppDbContext db)
         var item = await db.EntryOutputTemplates.SingleOrDefaultAsync(t => t.Id == id, ct) ?? throw new AppException(404, "Modèle d’exportation introuvable.");
         if (item.Version != version) throw new AppException(409, "Le modèle a changé. Rechargez la liste.");
         var reference = JsonSerializer.Serialize(new[] { new { outputTemplateId = id } }, Json);
-        if (await db.ClientEntryModelSets.AnyAsync(d => EF.Functions.JsonContains(d.ModelsJson, reference), ct))
+        var inUse = db.Database.IsSqlServer()
+            ? await db.ClientEntryModelSets.FromSqlInterpolated($"""
+                SELECT m.* FROM ClientEntryModelSets m WHERE EXISTS
+                (SELECT 1 FROM OPENJSON(m.ModelsJson) WITH (formatId uniqueidentifier '$.outputTemplateId') j WHERE j.formatId={id})
+                """).AnyAsync(ct)
+            : await db.ClientEntryModelSets.AnyAsync(d => EF.Functions.JsonContains(d.ModelsJson, reference), ct);
+        if (inUse)
             throw new AppException(409, "Ce format est utilisé par une écriture. Choisissez un autre format dans cette écriture avant de le supprimer.");
         db.EntryOutputTemplates.Remove(item);
         try { await db.SaveChangesAsync(ct); }

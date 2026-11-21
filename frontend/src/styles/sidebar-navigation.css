@@ -593,6 +593,37 @@
   opacity: 0.55;
   cursor: wait;
 }
+
+/* Compact navbar menus and theme control. */
+.appearance-toggle-glyph { position:relative; display:block; width:18px; height:18px; }
+.appearance-toggle-glyph > svg { position:absolute; inset:0; transition:transform 320ms cubic-bezier(.2,.75,.25,1), opacity 180ms ease; }
+.appearance-moon { opacity:1; transform:rotate(0) scale(1); }
+.appearance-sun { opacity:0; transform:rotate(-50deg) scale(.65); }
+[data-theme='dark'] .appearance-moon { opacity:0; transform:rotate(50deg) scale(.65); }
+[data-theme='dark'] .appearance-sun { opacity:1; transform:rotate(0) scale(1); }
+.alias-menu-trigger.appearance-toggle { overflow:hidden; }
+.alias-theme-menu.mini-theme-menu[data-state='open'] { animation:navbar-menu-in 160ms cubic-bezier(.2,.7,.2,1) both; transform-origin:var(--radix-dropdown-menu-content-transform-origin); }
+.alias-theme-menu.mini-theme-menu[data-state='closed'] { animation:navbar-menu-out 110ms ease-in both; transform-origin:var(--radix-dropdown-menu-content-transform-origin); }
+.alias-theme-menu.mini-theme-menu { border-color:color-mix(in srgb,var(--border) 85%,var(--primary)); box-shadow:0 16px 42px rgb(24 44 76 / 17%),0 3px 10px rgb(24 44 76 / 7%); }
+.account-menu-trigger { min-width:0; padding:4px 9px 4px 5px; gap:8px; color:var(--foreground); }
+.account-menu-avatar { width:27px; height:27px; border:1px solid color-mix(in srgb,var(--primary) 23%,var(--border)); background:linear-gradient(145deg,var(--avatar-background),color-mix(in srgb,var(--avatar-background) 55%,var(--surface))); color:var(--avatar-foreground); font-size:10px; letter-spacing:.025em; box-shadow:inset 0 1px 0 rgb(255 255 255 / 40%); }
+.account-menu-name { max-width:120px; overflow:hidden; color:var(--foreground); font-size:11px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+.account-menu-trigger > svg { color:var(--muted-foreground); transition:transform 180ms ease; }
+.account-menu-trigger[data-state='open'] > svg { transform:rotate(180deg); }
+.account-menu-trigger:hover .account-menu-avatar,
+.account-menu-trigger[data-state='open'] .account-menu-avatar { box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 12%,transparent); }
+@keyframes navbar-menu-in { from { opacity:0; transform:translateY(-4px) scale(.975); } to { opacity:1; transform:translateY(0) scale(1); } }
+@keyframes navbar-menu-out { from { opacity:1; transform:translateY(0) scale(1); } to { opacity:0; transform:translateY(-2px) scale(.985); } }
+@media (max-width:650px) {
+  .account-menu-name { display:none; }
+  .account-menu-trigger { padding-inline:5px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .appearance-toggle-glyph > svg,
+  .alias-theme-menu.mini-theme-menu[data-state='open'],
+  .alias-theme-menu.mini-theme-menu[data-state='closed'],
+  .account-menu-trigger > svg { animation:none; transition:none; }
+}
 .mini-logout-item:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: -2px;

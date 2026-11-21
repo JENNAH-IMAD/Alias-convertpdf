@@ -31,6 +31,24 @@ import { chooseExportDestination, saveExportBlob } from '@/lib/save-export';
 import '@/styles/entry-models.css';
 import '@/styles/model-catalogs.css';
 
+export function newEntryRule(format?: EntryOutputTemplate): EntryModel {
+  return {
+    id: createUuid(),
+    name: '',
+    abbreviation: '',
+    keywords: [],
+    bankAccountId: '',
+    accountCode: '',
+    exportTemplateId: '00000000-0000-0000-0000-000000000000',
+    taxRate: 0,
+    taxAccountCode: '',
+    active: true,
+    bankAccountBased: true,
+    output: format?.output || defaultEntryOutput(),
+    outputTemplateId: format?.id || null,
+  };
+}
+
 export function ClientEntryModels({
   embedded = false,
   initialClientId,
@@ -118,21 +136,7 @@ export function ClientEntryModels({
           formats.data?.find((t) => t.active && t.id === params.get('outputTemplateId')) ||
           formats.data?.find((t) => t.active && t.id === '9d2e4a78-fb36-4820-9c04-87b370743915') ||
           formats.data?.find((t) => t.active);
-        setEditing({
-          id: createUuid(),
-          name: '',
-          abbreviation: '',
-          keywords: [],
-          bankAccountId: '',
-          accountCode: '',
-          exportTemplateId: '00000000-0000-0000-0000-000000000000',
-          taxRate: 0,
-          taxAccountCode: '',
-          active: true,
-          bankAccountBased: true,
-          output: format?.output || defaultEntryOutput(),
-          outputTemplateId: format?.id || null,
-        });
+        setEditing(newEntryRule(format));
       }}
     >
       <Plus size={17} /> Nouveau modèle
@@ -154,7 +158,7 @@ export function ClientEntryModels({
         <PageHeader
           icon={BookOpen}
           eyebrow="Règles de traitement"
-          title="Modèles d’écritures par client"
+          title="Paramétrage de l’écriture"
           description="Un client, une banque, des mots à reconnaître et un taux de TVA."
           actions={createButton}
         />
@@ -218,6 +222,9 @@ export function ClientEntryModels({
             Sélectionnez son dossier ci-dessus pour consulter ses règles ou créer un modèle
             d’écritures.
           </p>
+          <Link className="template-use-link" href="/templates?section=entries">
+            Choisir un modèle d’exportation des écritures
+          </Link>
         </section>
       ) : (
         !loading &&
@@ -385,11 +392,12 @@ export function ClientEntryModels({
     </div>
   );
 }
-function EntryModelEditor({
+export function EntryModelEditor({
   initial,
   accounts,
 
   formats,
+  forConversion = false,
   busy,
   error,
   onClose,
@@ -400,6 +408,7 @@ function EntryModelEditor({
   accounts: Account[];
 
   formats: EntryOutputTemplate[];
+  forConversion?: boolean;
   busy: boolean;
   error: string;
   onClose: () => void;
@@ -443,7 +452,13 @@ function EntryModelEditor({
   );
   return (
     <BankDialog
-      title={initial.name ? 'Modifier le modèle d’écritures' : 'Nouveau modèle d’écritures'}
+      title={
+        forConversion
+          ? 'Nouvelle règle du client'
+          : initial.name
+            ? 'Modifier le modèle d’écritures'
+            : 'Nouveau modèle d’écritures'
+      }
       onClose={onClose}
       busy={busy}
       wide
@@ -604,44 +619,46 @@ function EntryModelEditor({
             </span>
           </label>
         </fieldset>
-        <div className="entry-rule-options">
-          <label>
-            Format du résultat
-            <select
-              aria-label="Format du résultat"
-              className="ui-input mt-2"
-              disabled={busy}
-              value={draft.outputTemplateId || ''}
-              onChange={(e) => {
-                const format = formats.find((t) => t.id === e.target.value);
-                setDraft({
-                  ...draft,
-                  outputTemplateId: format?.id || null,
-                  output: format?.output || draft.output,
-                });
-              }}
-            >
-              <option value="">Réglages enregistrés dans l’écriture</option>
-              {formats
-                .filter((t) => t.active || t.id === draft.outputTemplateId)
-                .map((t) => (
-                  <option key={t.id} value={t.id} disabled={!t.active}>
-                    {t.name}
-                    {!t.active ? ' — Inactif' : ''}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label className="entry-model-check">
-            <input
-              type="checkbox"
-              disabled={busy}
-              checked={draft.active}
-              onChange={(e) => setDraft({ ...draft, active: e.target.checked })}
-            />
-            Modèle actif
-          </label>
-        </div>
+        {!forConversion && (
+          <div className="entry-rule-options">
+            <label>
+              Format du résultat
+              <select
+                aria-label="Format du résultat"
+                className="ui-input mt-2"
+                disabled={busy}
+                value={draft.outputTemplateId || ''}
+                onChange={(e) => {
+                  const format = formats.find((t) => t.id === e.target.value);
+                  setDraft({
+                    ...draft,
+                    outputTemplateId: format?.id || null,
+                    output: format?.output || draft.output,
+                  });
+                }}
+              >
+                <option value="">Réglages enregistrés dans l’écriture</option>
+                {formats
+                  .filter((t) => t.active || t.id === draft.outputTemplateId)
+                  .map((t) => (
+                    <option key={t.id} value={t.id} disabled={!t.active}>
+                      {t.name}
+                      {!t.active ? ' — Inactif' : ''}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="entry-model-check">
+              <input
+                type="checkbox"
+                disabled={busy}
+                checked={draft.active}
+                onChange={(e) => setDraft({ ...draft, active: e.target.checked })}
+              />
+              Modèle actif
+            </label>
+          </div>
+        )}
         {(!draft.output.columns.some((c) => c.display) ||
           !draft.output.columns.some((c) => c.export)) && (
           <p className="conversion-alert warning" role="status">
@@ -676,7 +693,11 @@ function EntryModelEditor({
               !draft.output.columns.some((c) => c.export)
             }
           >
-            {busy ? 'Enregistrement…' : 'Enregistrer le modèle'}
+            {busy
+              ? 'Enregistrement…'
+              : forConversion
+                ? 'Enregistrer la règle'
+                : 'Enregistrer le modèle'}
           </Button>
         </div>
       </form>

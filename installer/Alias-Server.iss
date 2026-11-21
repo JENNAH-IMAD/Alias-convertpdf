@@ -58,14 +58,15 @@ begin
   PortsPage.Values[0] := '3002'; PortsPage.Values[1] := '5081';
   DatabaseModePage := CreateInputOptionPage(PortsPage.ID, 'Base de donnees',
     'Comment souhaitez-vous preparer la base ?',
-    'Le mode automatique installe une base PostgreSQL reservee a Alias sur ce serveur. Les identifiants et un port libre sont generes automatiquement.', True, False);
-  DatabaseModePage.Add('Creer et configurer automatiquement la base locale (recommande)');
-  DatabaseModePage.Add('Utiliser une base PostgreSQL existante (configuration avancee)');
-  DatabaseModePage.SelectedValueIndex := 0;
-  DatabasePage := CreateInputQueryPage(DatabaseModePage.ID, 'Base PostgreSQL existante',
+    'Utilisez la base SQL Server migree ou une base dediee vide. Le mode PostgreSQL est disponible pour les anciennes installations.', True, False);
+  DatabaseModePage.Add('Base PostgreSQL locale (compatibilite)');
+  DatabaseModePage.Add('Utiliser SQL Server (recommande)');
+  DatabaseModePage.SelectedValueIndex := 1;
+  DatabasePage := CreateInputQueryPage(DatabaseModePage.ID, 'Connexion SQL Server',
     'Renseignez uniquement une base existante.',
-    'Exemple : Host=127.0.0.1;Port=5432;Database=alias;Username=alias;Password=... . Cette connexion reste uniquement sur le serveur.');
-  DatabasePage.Add('Connexion PostgreSQL (masquee) :', True);
+    'Le compte du service Windows NetworkService doit avoir acces a la base.');
+  DatabasePage.Add('Connexion SQL Server (masquee) :', True);
+  DatabasePage.Values[0] := 'Server=.\SQLEXPRESS;Database=AliasConvertPdf;Integrated Security=true;Encrypt=true;TrustServerCertificate=true';
   DataPage := CreateInputDirPage(DatabasePage.ID, 'Donnees du serveur',
     'Dossier conserve lors de la desinstallation.',
     'PDF, exports, cles de chiffrement, configuration OCR et journaux seront conserves ici.', False, '');
@@ -101,7 +102,7 @@ begin
     end else AccessPage.Values[0] := 'http://'+GetComputerNameString+':'+IntToStr(Front);
   end;
   if (CurPageID = DatabasePage.ID) and (DatabaseModePage.SelectedValueIndex = 1) and (Trim(DatabasePage.Values[0]) = '') then begin
-    MsgBox('Renseignez la connexion PostgreSQL.', mbError, MB_OK); Result := False;
+    MsgBox('Renseignez la connexion SQL Server.', mbError, MB_OK); Result := False;
   end;
   if (CurPageID = DataPage.ID) and
     (Pos(Lowercase(AddBackslash(ExpandConstant('{app}'))), Lowercase(AddBackslash(DataPage.Values[0]))) = 1) then begin

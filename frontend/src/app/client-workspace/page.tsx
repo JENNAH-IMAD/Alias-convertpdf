@@ -3,6 +3,7 @@ import { Suspense, useEffect, useState, ViewTransition } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Archive } from 'lucide-react';
 import { ClientConversions } from '@/components/client-conversions';
+import { ClientExportResults } from '@/components/client-export-results';
 import { ClientExtracts } from '@/components/client-extracts';
 import { all, Client } from '@/services/api';
 import { PageHeader } from '@/components/page-header';
@@ -54,7 +55,7 @@ function ClientWorkspace() {
         icon={Archive}
         eyebrow="Espace clients"
         title="L’espace de vos clients."
-        description="Retrouvez les relevés bancaires et les extraits de vos clients."
+        description="Retrouvez les écritures comptables, les exports et les documents bancaires de vos clients."
       />
       <section className="ui-card workspace-client-selector">
         <label className="workspace-client-choice">
@@ -94,6 +95,7 @@ function ClientWorkspace() {
           {error}
         </p>
       )}
+      <ClientExportResults key={clientId} clientId={clientId} />
       <div
         className="conversion-tabs workspace-document-tabs"
         role="tablist"

@@ -60,9 +60,7 @@ sealed class ManagerForm : Form
         layout.Controls.Add(config);
         layout.Controls.Add(new Label() { Text = "Base de données et administration", Font = new("Segoe UI", 13, FontStyle.Bold), AutoSize = true });
         var database = new FlowLayoutPanel() { AutoSize = true };
-        AddButton(database, "Ouvrir pgAdmin", OpenPgAdmin);
-        AddButton(database, "Connexion PostgreSQL", ShowDatabase);
-        AddButton(database, "Configuration OCR", () => Open(GetSettings()["PublicUrl"]!.ToString().TrimEnd('/') + "/settings"));
+        AddButton(database, "Connexion à la base", ShowDatabase);
         layout.Controls.Add(database);
         var logs = new FlowLayoutPanel() { AutoSize = true };
         AddButton(logs, "Voir les journaux", () => Open(Path.Combine(data, "logs")));
@@ -81,6 +79,7 @@ sealed class ManagerForm : Form
         Controls.Add(footer);
         front.ValueChanged += (_, _) => { if (Uri.TryCreate(url.Text, UriKind.Absolute, out var current)) { var builder = new UriBuilder(current) { Port = (int)front.Value }; url.Text = builder.Uri.GetLeftPart(UriPartial.Authority); } };
         LoadConfiguration();
+        if (IsManagedPostgres()) AddButton(database, "Ouvrir pgAdmin", OpenPgAdmin);
         RefreshServices();
         timer.Tick += (_, _) => RefreshServices();
         timer.Start();
@@ -103,10 +102,11 @@ sealed class ManagerForm : Form
         }
         catch (Exception e) { feedback.Text = "Serveur non configuré : " + e.Message; }
     }
+    bool IsManagedPostgres() => File.Exists(Path.Combine(data, "Server.json")) && GetSettings()["DatabaseMode"]?.ToString() == "0";
     void RefreshServices()
     {
         var entries = new List<string>();
-        foreach (var name in new[] { "AliasPostgreSQL", "AliasBackend", "AliasFrontend" })
+        foreach (var name in IsManagedPostgres() ? new[] { "AliasPostgreSQL", "AliasBackend", "AliasFrontend" } : new[] { "AliasBackend", "AliasFrontend" })
         {
             try
             {
@@ -189,17 +189,18 @@ sealed class ManagerForm : Form
             var info = JsonNode.Parse(File.ReadAllText(Path.Combine(data, "Alias.Runtime.json")))!;
             var connection = new DbConnectionStringBuilder() { ConnectionString = info["ConnectionStrings"]!["Default"]!.ToString() };
             string Value(string key, string fallback = "") => connection.TryGetValue(key, out var value) ? value.ToString()! : fallback;
-            host = Value("Host");
-            user = Value("Username");
+            host = Value("Server", Value("Data Source", Value("Host")));
+            user = Value("User ID", Value("Username", "Authentification Windows"));
             password = Value("Password");
-            port = Value("Port", "5432");
-            database = Value("Database");
+            port = Value("Port", connection.ContainsKey("Host") ? "5432" : "Selon l’instance");
+            database = Value("Database", Value("Initial Catalog"));
         }
-        using var dialog = new Form() { Text = "Connexion PostgreSQL — administrateur", Size = new(520, 330), StartPosition = FormStartPosition.CenterParent, Font = Font };
+        using var dialog = new Form() { Text = "Connexion à la base Alias", Size = new(520, 330), StartPosition = FormStartPosition.CenterParent, Font = Font };
         var panel = new FlowLayoutPanel() { Dock = DockStyle.Fill, Padding = new Padding(20), FlowDirection = FlowDirection.TopDown, WrapContents = false };
         dialog.Controls.Add(panel);
-        panel.Controls.Add(new Label() { Text = $"Hôte : {host}\nPort : {port}\nBase : {database}\nUtilisateur : {user}\nBase de maintenance pgAdmin : {database}", AutoSize = true });
+        panel.Controls.Add(new Label() { Text = $"Hôte : {host}\nPort : {port}\nBase : {database}\nUtilisateur : {user}", AutoSize = true });
         var secret = new TextBox() { Text = password, UseSystemPasswordChar = true, ReadOnly = true, Width = 460 };
+        if (password.Length == 0) { dialog.ShowDialog(this); return; }
         panel.Controls.Add(secret);
         var reveal = new CheckBox() { Text = "Afficher le mot de passe", AutoSize = true };
         reveal.CheckedChanged += (_, _) => secret.UseSystemPasswordChar = !reveal.Checked;

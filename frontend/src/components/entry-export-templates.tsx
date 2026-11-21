@@ -1,16 +1,22 @@
 'use client';
 import { useState } from 'react';
 import Link from 'next/link';
-import { Columns3, Copy, FileOutput, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Columns3, Copy, Download, FileOutput, Pencil, Plus, Trash2 } from 'lucide-react';
 import { request, documentBlob } from '@/services/api';
 import { useApi } from '@/services/use-api';
-import { defaultEntryOutput, type EntryOutputTemplate } from '@/services/entry-models';
+import {
+  defaultEntryColumnFormat,
+  defaultEntryOutput,
+  type EntryOutputTemplate,
+} from '@/services/entry-models';
 import { Button } from './ui/button';
 import { BankDialog } from './bank-dialogs';
 import { LoadState } from './ui/load-state';
 import { EntryOutputSettings } from './entry-output-settings';
 import { chooseExportDestination, saveExportBlob } from '@/lib/save-export';
 import { useUnsavedChanges } from '@/lib/use-unsaved-changes';
+import { PageHeader } from './page-header';
+import { TemplateExcelButton } from './template-excel-button';
 import '@/styles/entry-models.css';
 
 export function EntryExportTemplates() {
@@ -80,25 +86,33 @@ export function EntryExportTemplates() {
     }
   }
   return (
-    <section className="space-y-5" aria-label="Modèles d’exportation des écritures comptables">
-      <div className="entry-model-toolbar">
-        <div>
-          <h2 className="text-xl font-semibold">Formats des écritures comptables</h2>
-          <p className="muted text-sm mt-2">
-            Définissez les colonnes et le fichier à télécharger après le calcul de la TVA.
-          </p>
-        </div>
-        <Button
-          permission="templates.write"
-          onClick={() => {
-            setError('');
-            setEditing(empty());
-          }}
-        >
-          <Plus size={16} /> Nouveau format d’écritures
-        </Button>
-      </div>
+    <section
+      className="model-catalog-content"
+      aria-label="Modèles d’exportation des écritures comptables"
+    >
+      <PageHeader
+        icon={FileOutput}
+        eyebrow="Formats de fichiers"
+        title="Modèles d’exportation"
+        description="Gérez les formats CSV et Sage, leurs colonnes et leurs réglages."
+        actions={
+          <Button
+            permission="templates.write"
+            onClick={() => {
+              setError('');
+              setEditing(empty());
+            }}
+          >
+            <Plus size={17} /> Ajouter un modèle
+          </Button>
+        }
+      />
       <LoadState loading={templates.loading} error={templates.error} />
+      <p className="ui-card">
+        Pour exporter les pièces équilibrées au format Sage 100, importez le PDF, puis choisissez «
+        Format Sage 100 équilibré » à la vérification. Le TXT contient le journal, la date, le
+        compte, la pièce, le libellé, le débit et le crédit en colonnes alignées, sans en-tête.
+      </p>
       {error && !editing && !removing && (
         <p className="conversion-alert error" role="alert">
           {error}
@@ -109,30 +123,42 @@ export function EntryExportTemplates() {
           {notice}
         </p>
       )}
-      <div className="entry-model-grid">
+      <div className="catalog-grid template-grid">
         {templates.data?.map((item) => (
-          <article key={item.id} className="ui-card entry-model-card">
-            <div className="entry-model-card-heading">
-              <span className="statement-card-icon">
-                <FileOutput size={24} />
+          <article key={item.id} className="ui-card template-card">
+            <div className="template-card-top">
+              <span className="template-format-icon">
+                <FileOutput size={23} />
               </span>
               <span className={item.active ? 'status-positive' : 'ui-tag'}>
                 {item.active ? 'Actif' : 'Inactif'}
               </span>
             </div>
-            <h3 className="text-lg font-semibold">{item.name}</h3>
-            <p className="muted text-sm">{item.description}</p>
-            <p className="text-sm font-medium text-primary">
-              .{item.output.fileExtension || 'txt'} · {item.output.encoding} · Séparateur :{' '}
-              {item.output.delimiter === '\t' ? 'Tabulation' : item.output.delimiter} ·{' '}
-              {item.output.includeHeader ? 'Avec en-têtes' : 'Sans en-têtes'}
+            <h2 className="text-lg font-semibold">{item.name}</h2>
+            <p className="template-format-meta">
+              .{item.output.fileExtension || 'txt'} · {item.output.encoding} ·{' '}
+              {item.output.fileExtension === 'txt' &&
+              item.output.delimiter === '\t' &&
+              !item.output.includeHeader &&
+              item.output.columns
+                .filter((column) => column.export)
+                .map((column) => column.field)
+                .join('|') === 'JOURNAL|DATE|ACCOUNT|PIECE|DESCRIPTION|DEBIT_HT|CREDIT_HT'
+                ? 'Colonnes alignées'
+                : item.output.delimiter === '\t'
+                  ? 'Tabulation'
+                  : item.output.delimiter}{' '}
+              · {item.output.includeHeader ? 'Avec en-têtes' : 'Sans en-têtes'}
             </p>
-            <div className="rounded-xl border border-border bg-muted/40 p-4">
-              <p className="flex items-center gap-2 text-sm font-medium mb-3">
+            <p className="template-description">
+              {item.description || 'Format d’exportation des écritures comptables.'}
+            </p>
+            <div className="template-field-summary">
+              <strong>
                 <Columns3 size={16} />
                 {item.output.columns.filter((c) => c.export).length} colonnes exportées
-              </p>
-              <div className="entry-model-keywords">
+              </strong>
+              <div>
                 {item.output.columns
                   .filter((c) => c.export)
                   .map((c) => (
@@ -140,22 +166,32 @@ export function EntryExportTemplates() {
                   ))}
               </div>
             </div>
-            <div className="entry-model-actions">
+            {item.active && (
+              <Link
+                className="template-use-link"
+                href={`/conversions?import=1&type=accounting&outputTemplateId=${item.id}`}
+              >
+                Importer un PDF avec ce modèle
+              </Link>
+            )}
+            <div className="catalog-card-actions">
+              <TemplateExcelButton
+                name={item.name}
+                columns={item.output.columns.filter((c) => c.export).map((c) => c.label)}
+              />
               <Button
                 permission="templates.write"
                 variant="outline"
-                size="sm"
                 onClick={() => {
                   setError('');
                   setEditing(item);
                 }}
               >
-                <Pencil size={15} /> Paramétrer
+                <Pencil size={15} /> Modifier
               </Button>
               <Button
                 permission="templates.write"
                 variant="outline"
-                size="sm"
                 onClick={() => {
                   setError('');
                   setEditing({ ...item, id: '', version: 0, name: item.name + ' — copie' });
@@ -166,37 +202,38 @@ export function EntryExportTemplates() {
               <Button
                 permission="documents.export"
                 variant="outline"
-                size="sm"
+                size="icon"
+                aria-label={`Télécharger le modèle ${item.name}`}
+                title="Télécharger le modèle"
                 disabled={busy}
                 onClick={() => void structure(item)}
               >
-                Télécharger le modèle
+                <Download size={16} />
               </Button>
               <Button
                 permission="templates.write"
-                variant="danger"
-                size="sm"
+                variant="outline"
+                size="icon"
+                aria-label={`Supprimer ${item.name}`}
+                title="Supprimer le modèle"
+                className="danger-button"
                 onClick={() => {
                   setError('');
                   setRemoving(item);
                 }}
               >
-                <Trash2 size={15} /> Supprimer
+                <Trash2 size={16} />
               </Button>
             </div>
-            <Link
-              className="text-sm text-primary underline"
-              href={`/entry-models?outputTemplateId=${item.id}`}
-            >
-              Utiliser ce format pour une écriture du client
-            </Link>
           </article>
         ))}
       </div>
       {!templates.loading && !templates.error && !templates.data?.length && (
-        <p className="ui-card muted">
-          Créez un format d’écritures : les cinq colonnes demandées sont proposées automatiquement.
-        </p>
+        <section className="ui-card template-empty-state">
+          <FileOutput size={24} />
+          <h2>Aucun modèle enregistré</h2>
+          <p>Créez un format d’écritures à partir des colonnes comptables proposées.</p>
+        </section>
       )}
       {editing && (
         <EntryExportTemplateEditor
@@ -250,61 +287,82 @@ function EntryExportTemplateEditor({
   onClose: () => void;
   onSave: (value: EntryOutputTemplate) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(initial);
-  useUnsavedChanges(JSON.stringify(draft) !== JSON.stringify(initial));
+  const normalizedInitial = {
+    ...initial,
+    output: {
+      ...initial.output,
+      columns: initial.output.columns.map((column) => ({
+        ...column,
+        required: column.required ?? false,
+        format:
+          column.format ??
+          defaultEntryColumnFormat(
+            column.field,
+            initial.output.numberCulture,
+            initial.output.dateFormat,
+          ),
+      })),
+    },
+  };
+  const [draft, setDraft] = useState<EntryOutputTemplate>(() => normalizedInitial);
+  useUnsavedChanges(JSON.stringify(draft) !== JSON.stringify(normalizedInitial));
   return (
     <BankDialog
       wide
-      title={
-        initial.id
-          ? 'Paramétrer le format d’écritures'
-          : 'Nouveau format d’exportation des écritures'
-      }
+      title={initial.id ? 'Modifier le modèle' : 'Ajouter un modèle'}
       busy={busy}
       onClose={onClose}
+      className="entry-output-template-dialog"
     >
       <form
-        className="entry-model-form"
+        className="entry-model-form entry-output-template-form"
         onSubmit={(e) => {
           e.preventDefault();
           void onSave(draft);
         }}
       >
-        <fieldset disabled={busy}>
-          <label>
-            Nom du modèle
-            <input
-              className="ui-input mt-2"
-              required
-              maxLength={100}
-              value={draft.name}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            />
-          </label>
-          <label>
-            Description
-            <textarea
-              className="ui-input mt-2"
-              maxLength={1000}
-              value={draft.description}
-              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-            />
-          </label>
+        <div className="entry-output-template-guide">
+          <strong>Votre modèle en 3 étapes</strong>
+          <p>1. Nommez le format · 2. Réglez le fichier · 3. Choisissez les colonnes</p>
+        </div>
+        <fieldset disabled={busy} className="entry-output-template-identity">
+          <legend>1. Nommez le format</legend>
+          <div className="entry-output-template-identity-fields">
+            <label>
+              Nom du modèle
+              <input
+                className="ui-input mt-2"
+                required
+                maxLength={100}
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              />
+            </label>
+            <label>
+              Description
+              <textarea
+                className="ui-input mt-2"
+                maxLength={1000}
+                value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              />
+            </label>
+            <label className="entry-model-check">
+              <input
+                type="checkbox"
+                checked={draft.active}
+                disabled={busy}
+                onChange={(e) => setDraft({ ...draft, active: e.target.checked })}
+              />{' '}
+              Modèle actif
+            </label>
+          </div>
         </fieldset>
         <EntryOutputSettings
           value={draft.output}
           disabled={busy}
           onChange={(output) => setDraft({ ...draft, output })}
         />
-        <label className="entry-model-check">
-          <input
-            type="checkbox"
-            checked={draft.active}
-            disabled={busy}
-            onChange={(e) => setDraft({ ...draft, active: e.target.checked })}
-          />{' '}
-          Format actif
-        </label>
         {error && (
           <p className="conversion-alert error" role="alert">
             {error}
@@ -322,7 +380,7 @@ function EntryExportTemplateEditor({
               !draft.output.columns.some((c) => c.export)
             }
           >
-            Enregistrer le format
+            Enregistrer
           </Button>
         </div>
       </form>

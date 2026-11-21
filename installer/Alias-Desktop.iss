@@ -28,7 +28,12 @@ Name: "{commondesktop}\Alias Desktop"; Filename: "{app}\desktop\Alias.Desktop.ex
 Name: "{group}\Alias Desktop"; Filename: "{app}\desktop\Alias.Desktop.exe"; IconFilename: "{app}\Alias.ico"
 Name: "{group}\Guide d'installation"; Filename: "{app}\GUIDE-INSTALLATION.md"
 [Code]
-var Ports: TInputQueryWizardPage; Data: TInputDirWizardPage; Snapshot: TInputOptionWizardPage;
+#if FileExists(StageDir + "\project-data\database.dump")
+  #define LegacySnapshot 1
+#else
+  #define LegacySnapshot 0
+#endif
+var Ports, DatabasePage: TInputQueryWizardPage; Data: TInputDirWizardPage; Snapshot: TInputOptionWizardPage;
 function Json(Value: String): String;
 begin
   StringChangeEx(Value, '\', '\\', True); StringChangeEx(Value, '"', '\"', True);
@@ -36,13 +41,16 @@ begin
 end;
 procedure InitializeWizard;
 begin
-  Ports := CreateInputQueryPage(wpSelectDir,'Application desktop','Ports des services locaux','Ces services restent accessibles uniquement sur ce PC. PostgreSQL est inclus et configure automatiquement.');
+  Ports := CreateInputQueryPage(wpSelectDir,'Application desktop','Ports des services locaux','Ces services restent accessibles uniquement sur ce PC. La base SQL Server se configure a l etape suivante.');
   Ports.Add('Port de l interface :',False); Ports.Values[0] := '3010';
   Ports.Add('Port du backend :',False); Ports.Values[1] := '5090';
-  Data := CreateInputDirPage(Ports.ID,'Stockage local','Un dossier protege et conserve a la desinstallation','Les PDF, la base, les exports et les reglages restent sur ce PC.',False,'');
+  DatabasePage := CreateInputQueryPage(Ports.ID,'SQL Server','Connexion a la base','Le service Windows NetworkService doit avoir acces a la base et au schema. Pour restaurer la copie privee, indiquez une nouvelle base ou une base vide.');
+  DatabasePage.Add('Connexion SQL Server :', True);
+  DatabasePage.Values[0] := 'Server=.\SQLEXPRESS;Database=AliasConvertPdf;Integrated Security=true;Encrypt=true;TrustServerCertificate=true';
+  Data := CreateInputDirPage(DatabasePage.ID,'Stockage local','Un dossier protege et conserve a la desinstallation','Les PDF, la base, les exports et les reglages restent sur ce PC.',False,'');
   Data.Add('Dossier des donnees :'); Data.Values[0] := ExpandConstant('{commonappdata}\Alias Desktop');
   Snapshot := CreateInputOptionPage(Data.ID,'Donnees de depart','Copie privee du projet ou nouvelle base','La copie contient les utilisateurs, les clients, les modeles, les releves et les documents presents lors de la fabrication. Les sessions et cles API ne sont pas transferees. Ne distribuez pas cet installateur publiquement.',True,False);
-  Snapshot.Add('Commencer avec une nouvelle base'); Snapshot.Add('Importer la copie des donnees du projet'); Snapshot.SelectedValueIndex := 1;
+  Snapshot.Add('Utiliser la base configuree'); Snapshot.Add('Importer la copie des donnees du projet'); Snapshot.SelectedValueIndex := 0;
 end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 var Front,Back,Code: Integer;
@@ -65,6 +73,10 @@ begin
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),'-NoProfile -NonInteractive -Command "if(Get-Service AliasDesktopBackend,AliasDesktopFrontend,AliasDesktopPostgreSQL -ErrorAction SilentlyContinue){exit 1}else{exit 0}"','',SW_HIDE,ewWaitUntilTerminated,Code) then Result := 'Verification des services impossible.'
   else if Code <> 0 then Result := 'Alias Desktop existe deja. Sauvegardez les donnees et desinstallez la version precedente avant de reinstaller. Les donnees sont conservees.';
 end;
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := (PageID = DatabasePage.ID) and ({#LegacySnapshot} = 1);
+end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var Code: Integer; Payload,Settings,Args: String;
 begin
@@ -76,7 +88,10 @@ begin
       if Code <> 0 then RaiseException('Installation WebView2 impossible. Verifiez Internet, puis relancez son installateur.');
     end;
     Settings := ExpandConstant('{tmp}\AliasDesktop-install.json');
-    Payload := '{"FrontendPort":'+Ports.Values[0]+',"BackendPort":'+Ports.Values[1]+',"DatabaseMode":"0","DataDirectory":'+Json(Data.Values[0])+',"PublicUrl":'+Json('http://127.0.0.1:'+Ports.Values[0])+',"ImportProjectData":'+Json(IntToStr(Snapshot.SelectedValueIndex))+'}';
+    Payload := '{"FrontendPort":'+Ports.Values[0]+',"BackendPort":'+Ports.Values[1]+',"DatabaseMode":"1","ConnectionString":'+Json(DatabasePage.Values[0])+',"DataDirectory":'+Json(Data.Values[0])+',"PublicUrl":'+Json('http://127.0.0.1:'+Ports.Values[0])+',"ImportProjectData":'+Json(IntToStr(Snapshot.SelectedValueIndex))+'}';
+    if {#LegacySnapshot} = 1 then begin
+      StringChangeEx(Payload, '"DatabaseMode":"1"', '"DatabaseMode":"0"', False);
+    end;
     SaveStringToFile(Settings,UTF8Encode(Payload),False);
     Args := '-NoProfile -ExecutionPolicy Bypass -File "'+ExpandConstant('{app}\installer\Run-DesktopInstallation.ps1')+'" -AppRoot "'+ExpandConstant('{app}')+'" -SettingsFile "'+Settings+'"';
     if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),Args,'',SW_HIDE,ewWaitUntilTerminated,Code) then Code := -1;

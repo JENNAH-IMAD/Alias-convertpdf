@@ -85,6 +85,16 @@ static class IndependentChecks
         var archiveId = await db.AccountingEntryArchives.Select(a => a.Id).SingleAsync();
         var stored = await service.Archive(archiveId, default);
         Check(stored.StatementId == record.Id && stored.ClientId == client.Id && stored.Rows.Count == 1, "IndependentArchive_ConsultationRetainsClientAndResult");
+        record.Status = "NEEDS_REVIEW";
+        record.Version++;
+        await db.SaveChangesAsync();
+        var pending = await service.Preview(run, default);
+        var pendingRun = run with { Confirmed = true, PreviewFingerprint = pending.Fingerprint };
+        await Reject(() => service.Export(pendingRun, default), 422, "IndependentExport_UnverifiedRequiresExplicitOverride");
+        var exceptional = await service.Export(pendingRun with { ForceUnverifiedDownload = true }, default);
+        Check(exceptional.Name.Contains("_A_VERIFIER", StringComparison.Ordinal)
+            && await db.AccountingEntryArchives.AnyAsync(a => a.FileName == exceptional.Name && a.ModelName.Contains("Téléchargement exceptionnel")),
+            "IndependentExport_UnverifiedFileIsMarkedAndArchived");
         await service.Save(client.Id, new(saved.Version, []), default);
         db.StatementImports.Remove(record); await db.SaveChangesAsync();
         var archived = await service.Archive(archiveId, default);

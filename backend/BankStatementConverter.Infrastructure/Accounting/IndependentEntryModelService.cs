@@ -63,7 +63,7 @@ public sealed class IndependentEntryModelService(AppDbContext db, EntryModelStor
         Validation.Require(detail.ClientId == input.ClientId && detail.BankAccountId.HasValue, "Classez le document dans l'entreprise et son compte bancaire.");
         var bank = await db.BankAccounts.AsNoTracking().SingleOrDefaultAsync(b => b.Id == detail.BankAccountId && b.ClientId == input.ClientId, ct)
             ?? throw new AppException(404, "Compte bancaire introuvable.");
-        if (db.Database.CurrentTransaction != null) bank = await db.BankAccounts.FromSqlInterpolated($"SELECT * FROM \"BankAccounts\" WHERE \"Id\"={bank.Id} FOR SHARE").AsNoTracking().SingleAsync(ct);
+        if (db.Database.CurrentTransaction != null) bank = await db.LockedRow<BankAccount>(bank.Id, forUpdate: false).AsNoTracking().SingleAsync(ct);
         var dossier = await accounting.Get(input.ClientId, ct);
         var models = dossier.Models.Where(m => m.Active && m.BankAccountId == bank.Id && m.Abbreviation == input.Abbreviation && (!input.ModelId.HasValue || m.Id == input.ModelId)).ToArray();
         Validation.Require(models.Length == 1, "Choisissez une écriture précise, active et liée à ce compte de l'entreprise.");
@@ -73,7 +73,7 @@ public sealed class IndependentEntryModelService(AppDbContext db, EntryModelStor
             selectedModel = selectedModel with { OutputTemplateId = input.OutputTemplateId };
         }
         var formats = selectedModel.OutputTemplateId is Guid templateId && db.Database.CurrentTransaction != null
-            ? await db.EntryOutputTemplates.FromSqlInterpolated($"SELECT * FROM \"EntryOutputTemplates\" WHERE \"Id\"={templateId} FOR SHARE").AsNoTracking().ToArrayAsync(ct)
+            ? await db.LockedRow<EntryOutputTemplate>(templateId, forUpdate: false).AsNoTracking().ToArrayAsync(ct)
             : await db.EntryOutputTemplates.AsNoTracking().ToArrayAsync(ct);
         var model = Normalize(selectedModel, [bank], formats);
         ValidateFormat(model, formats);
@@ -86,6 +86,7 @@ public sealed class IndependentEntryModelService(AppDbContext db, EntryModelStor
     }
     private EntryModelPreview Evaluate(Context c, EntryModelRun input)
     {
+        if (input.BalancedScope != null) return EvaluateBalanced(c, input);
         var classified = EntryModelEngine.Evaluate(c.Source, c.Bank, [c.Model], input.Decisions);
         var rows = classified.Where(r => r.Status == "MATCHED").Select(r => {
             var t = c.Source.Transactions.Single(t => t.Id == r.TransactionId);
@@ -101,7 +102,8 @@ public sealed class IndependentEntryModelService(AppDbContext db, EntryModelStor
             var debitHt = bankCredit ? r.Net!.Value : 0m;
             var creditHt = bankCredit ? 0m : r.Net!.Value;
             return new EntryResultRow(r.TransactionId, r.Sequence, r.Date, c.Model.AccountCode, c.Model.Name, r.Description, (c.Source.BankName ?? c.Bank.AccountName),
-                c.Model.Abbreviation, c.Source.Currency ?? c.Bank.Currency, t.Reference ?? "", r.Total!.Value, r.Net!.Value, r.Tax!.Value, c.Model.TaxRate, debitHt, creditHt);
+                c.Model.Abbreviation, c.Source.Currency ?? c.Bank.Currency, t.Reference ?? "", r.Total!.Value, r.Net!.Value, r.Tax!.Value, c.Model.TaxRate, debitHt, creditHt,
+                c.Bank.Journal, r.Sequence.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }).ToArray();
         var errors = new List<AccountingIssue>();
         if (!rows.Any()) errors.Add(new("EMPTY", "Aucun libellé ne correspond aux mots choisis pour cette écriture."));
@@ -119,6 +121,51 @@ public sealed class IndependentEntryModelService(AppDbContext db, EntryModelStor
         return new(input.ClientId, input.StatementId, input.ExtractId, c.Model.Abbreviation, c.Detail.Version, c.Dossier.Version,
             fingerprint, classified, [], errors, errors.Count == 0, c.Model.Output, rows);
     }
+    private static EntryModelPreview EvaluateBalanced(Context c, EntryModelRun input)
+    {
+        var errors = c.Detail.Errors.Select(e => new AccountingIssue(e.Code, e.Message)).ToList();
+        if (c.Detail.Status != "VALIDATED") errors.Add(new("SOURCE_NOT_VALIDATED", "Vérifiez et validez la source."));
+        if (c.Source.Currency != c.Bank.Currency) errors.Add(new("CURRENCY", "La devise doit correspondre au compte bancaire."));
+        var (rows, movements) = BalancedBankEntries.Build(c.Source, c.Bank, input, errors);
+        foreach (var (index, edit) in input.LineEdits ?? new Dictionary<int, EntryLineEdit>())
+        {
+            if (index < 0 || index >= rows.Length || edit == null || rows[index].TransactionId != edit.TransactionId
+                || rows[index].AccountCode != edit.OriginalAccount)
+            {
+                errors.Add(new("LINE_EDIT", "Les lignes ont changé. Annulez les corrections de lignes et recalculez."));
+                continue;
+            }
+            bool ValidCode(string? value) => value is { Length: > 0 and <= 32 } && value.All(char.IsAsciiLetterOrDigit);
+            bool Parse(string? value, out decimal amount) =>
+                decimal.TryParse(value?.Replace(',', '.'), System.Globalization.NumberStyles.AllowDecimalPoint,
+                    System.Globalization.CultureInfo.InvariantCulture, out amount) && amount >= 0 && AccountingEngine.Money(amount);
+            if (!ValidCode(edit.AccountCode) || !ValidCode(edit.Journal) || !DateOnly.TryParseExact(edit.Date, "yyyy-MM-dd", out var date)
+                || string.IsNullOrWhiteSpace(edit.PieceNumber) || edit.PieceNumber.Length > 32 || edit.PieceNumber.Any(char.IsWhiteSpace)
+                || string.IsNullOrWhiteSpace(edit.Description) || edit.Description.Length > 2000
+                || !Parse(edit.Debit, out var dr) || !Parse(edit.Credit, out var cr) || (dr > 0) == (cr > 0))
+            {
+                errors.Add(new("LINE_EDIT", $"Écriture {index + 1} : vérifiez les champs et renseignez un seul montant positif au débit ou au crédit."));
+                continue;
+            }
+            rows[index] = rows[index] with { Journal = edit.Journal, Date = date, AccountCode = edit.AccountCode,
+                PieceNumber = edit.PieceNumber, Description = edit.Description, DebitHt = dr, CreditHt = cr,
+                Gross = dr + cr, Net = dr + cr };
+        }
+        if (rows.GroupBy(row => (row.Journal ?? row.Abbreviation, row.Date, row.PieceNumber ?? row.Reference))
+            .Any(piece => piece.Sum(r => r.DebitHt) != piece.Sum(r => r.CreditHt)))
+            errors.Add(new("UNBALANCED", "Le total débit diffère du total crédit pour au moins une pièce."));
+        var output = BalancedBankEntries.Format;
+        try { _ = EntryModelTextExport.Generate(output, rows); }
+        catch (AppException e) { errors.Add(new("TXT_FORMAT", e.Message)); }
+        var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            formatVersion = EntryModelTextExport.FormatVersion,
+            input.ClientId, input.StatementId, input.ExtractId, input.BalancedScope, c.Detail.Version,
+            dossierVersion = c.Dossier.Version, c.Model.Id, output, rows, errors
+        }, Json)));
+        return new(input.ClientId, input.StatementId, input.ExtractId, c.Model.Abbreviation, c.Detail.Version,
+            c.Dossier.Version, fingerprint, movements, [], errors, errors.Count == 0, output, rows, CommissionOnlyVat: true);
+    }
     public async Task<EntryModelPreview> Preview(EntryModelRun input, CancellationToken ct)
     {
         var requestedAt = DateTime.UtcNow;
@@ -132,32 +179,44 @@ public sealed class IndependentEntryModelService(AppDbContext db, EntryModelStor
         var requestedAt = DateTime.UtcNow;
         Validation.Require(input.Confirmed, "Confirmez la vérification des résultats avant le téléchargement.");
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({"accounting:" + input.ClientId}, 0))", ct);
-        _ = await db.StatementImports.FromSqlInterpolated($"SELECT * FROM \"StatementImports\" WHERE \"Id\"={input.StatementId} FOR UPDATE").SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Document source introuvable.");
+        await db.LockResource("accounting:" + input.ClientId, ct);
+        _ = await db.LockedRow<StatementImport>(input.StatementId).SingleOrDefaultAsync(ct) ?? throw new AppException(404, "Document source introuvable.");
         var c = await Load(input, ct); var preview = Evaluate(c, input);
-        if (!preview.CanExport) throw new AppException(422, string.Join(" ", preview.Errors.Select(e => e.Message)));
+        var forced = input.ForceUnverifiedDownload && !preview.CanExport;
+        if (!preview.CanExport && (!forced || preview.ResultRows is not { Count: > 0 }
+            || preview.Errors.Any(e => e.Code is "TXT_FORMAT" or "BANK_ACCOUNT" or "BANK_JOURNAL" or "CURRENCY" or "LINE_EDIT")))
+            throw new AppException(422, string.Join(" ", preview.Errors.Select(e => e.Message)));
         if (preview.Fingerprint != input.PreviewFingerprint) throw new AppException(409, "Les données ou le modèle ont changé. Recalculez le résultat.");
-        await new StatementTreatmentStore(db).Save(c.Detail, input.ExtractId, "ENTRY", input, preview, requestedAt, ct);
-        var existing = await db.AccountingEntryArchives.AsNoTracking().SingleOrDefaultAsync(a => a.ClientId == input.ClientId && a.StatementId == input.StatementId && a.PreviewFingerprint == preview.Fingerprint, ct);
+        await new StatementTreatmentStore(db).Save(c.Detail, input.ExtractId, "ENTRY",
+            input with { ForceUnverifiedDownload = false }, preview, requestedAt, ct);
+        var archiveFingerprint = forced
+            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("unverified:" + preview.Fingerprint)))
+            : preview.Fingerprint;
+        var existing = await db.AccountingEntryArchives.AsNoTracking().SingleOrDefaultAsync(a => a.ClientId == input.ClientId && a.StatementId == input.StatementId && a.PreviewFingerprint == archiveFingerprint, ct);
         if (existing != null) { await tx.CommitAsync(ct); return await ArchiveFile(existing.Id, ct); }
-        var bytes = EntryModelTextExport.Generate(c.Model.Output!, preview.ResultRows!);
-        var fileName = $"ecritures_{c.Model.Abbreviation}_{input.StatementId.ToString("N")[..8]}.{c.Model.Output!.FileExtension}";
-        var key = await storage.SaveAsync(new MemoryStream(bytes), "entry-exports", c.Model.Output.FileExtension, ct);
+        var output = preview.Output!;
+        var bytes = EntryModelTextExport.Generate(output, preview.ResultRows!);
+        var suffix = forced ? "_A_VERIFIER" : "";
+        var fileName = $"ecritures_{c.Model.Abbreviation}_{input.StatementId.ToString("N")[..8]}{suffix}.{output.FileExtension}";
+        var key = await storage.SaveAsync(new MemoryStream(bytes), "entry-exports", output.FileExtension, ct);
         try {
             var clientName = await db.Clients.Where(x => x.Id == input.ClientId).Select(x => x.Name).SingleAsync(ct);
             db.AccountingEntryArchives.Add(new() { ClientId = input.ClientId, StatementId = input.StatementId, ModelId = c.Model.Id,
-                ClientName = clientName, BankName = (c.Source.BankName ?? c.Bank.AccountName), SourceFileName = c.Detail.SourceFileName ?? "", ModelName = c.Model.Name + " · " + c.Model.Abbreviation,
+                ClientName = clientName, BankName = (c.Source.BankName ?? c.Bank.AccountName), SourceFileName = c.Detail.SourceFileName ?? "", ModelName = c.Model.Name + " · " + c.Model.Abbreviation + (forced ? " · Téléchargement exceptionnel à vérifier" : ""),
                 SourceVersion = c.Detail.Version, DossierVersion = c.Dossier.Version, RowCount = preview.ResultRows!.Count,
-                FileName = fileName, Encoding = c.Model.Output!.Encoding, Delimiter = c.Model.Output.Delimiter, StorageKey = key,
-                ContentSha256 = Convert.ToHexString(SHA256.HashData(bytes)), PreviewFingerprint = preview.Fingerprint,
+                FileName = fileName, Encoding = output.Encoding,
+                Delimiter = EntryModelTextExport.IsAlignedSage(output) ? EntryModelTextExport.AlignedSeparator : output.Delimiter, StorageKey = key,
+                ContentSha256 = Convert.ToHexString(SHA256.HashData(bytes)), PreviewFingerprint = archiveFingerprint,
                 GeneratedByName = http.HttpContext?.User.Identity?.Name ?? "Utilisateur",
-                SnapshotJson = JsonSerializer.Serialize(new Snapshot(c.Model, c.Model.Output, preview.ResultRows!, c.Source, input.Decisions, input.KeywordOverrides), Json) });
+                SnapshotJson = JsonSerializer.Serialize(new Snapshot(c.Model, output, preview.ResultRows!, c.Source, input.Decisions, input.KeywordOverrides,
+                    forced ? preview.Errors : null), Json) });
             await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
-            return (bytes, Mime(c.Model.Output), fileName);
+            return (bytes, Mime(output), fileName);
         } catch { storage.Delete(key); throw; }
     }
     private sealed record Snapshot(AccountingEntryModel Model, EntryModelOutput Output, IReadOnlyList<EntryResultRow> Rows, BankStatement Source,
-        IReadOnlyDictionary<Guid, Guid?>? Decisions, IReadOnlyList<string>? KeywordOverrides);
+        IReadOnlyDictionary<Guid, Guid?>? Decisions, IReadOnlyList<string>? KeywordOverrides,
+        IReadOnlyList<AccountingIssue>? ConfirmedExportIssues = null);
     public async Task<(byte[] Content, string Mime, string Name)> ModelFile(Guid clientId, Guid modelId, CancellationToken ct)
     {
         var model = (await Get(clientId, ct)).Models.SingleOrDefault(m => m.Id == modelId) ?? throw new AppException(404, "Modèle introuvable pour cette entreprise.");

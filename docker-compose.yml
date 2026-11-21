@@ -18,7 +18,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     environment:
-      ConnectionStrings__Default: ${LOCAL_DATABASE_CONNECTION:?Set LOCAL_DATABASE_CONNECTION for PostgreSQL on host.docker.internal}
+      ConnectionStrings__Default: ${LOCAL_DATABASE_CONNECTION:?Set LOCAL_DATABASE_CONNECTION for SQL Server reachable from the backend}
       Seed__DemoData: ${DEMO_DATA:-false}
       Database__AutoMigrate: "true"
       Swagger__Enabled: "true"
@@ -26,12 +26,8 @@ services:
       AllowedHosts: ${ALLOWED_HOSTS:-localhost;127.0.0.1;backend}
       Storage__Root: /app/uploads
       Ocr__BaseUrl: http://ocr:8091
-      Ocr__Provider: ${Ocr__Provider:-AUTO}
-      Hybrid__AutoPaddleProvider: ${Hybrid__AutoPaddleProvider:-LOCAL}
       Hybrid__TimeoutSeconds: ${Hybrid__TimeoutSeconds:-0}
       Hybrid__PaddleTimeoutSeconds: ${Hybrid__PaddleTimeoutSeconds:-0}
-      Ocr__CloudToken: ${Ocr__CloudToken:-}
-      Ocr__CloudModel: ${Ocr__CloudModel:-PP-OCRv6}
       Ocr__TimeoutSeconds: ${Ocr__TimeoutSeconds:-0}
       Ocr__MaxConcurrentJobs: ${OCR_CONCURRENT_JOBS:-2}
       Ocr__MaxQueuedJobs: ${OCR_QUEUED_JOBS:-32}

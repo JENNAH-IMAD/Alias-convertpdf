@@ -53,7 +53,7 @@ public sealed class PermissionFilter : IAsyncAuthorizationFilter
         if (action.ControllerName == "EntryOutputTemplates" && action.ActionName == "List" && HttpMethods.IsGet(method)
             && (user.HasClaim("permission", "templates.read") || user.HasClaim("permission", "documents.read")))
             return Task.CompletedTask;
-        if (action.ControllerName == "EntryOutputTemplates" && action.ActionName == "Download") { area = "documents"; operation = "export"; }
+        if (action.ControllerName is "EntryOutputTemplates" or "Exports" && action.ActionName == "Download") { area = "documents"; operation = "export"; }
         if (action.ControllerName == "CatalogDeletion")
             operation = "write";
         if (action.ControllerName == "CatalogDeletion" && !HttpMethods.IsGet(method) &&

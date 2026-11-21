@@ -18,7 +18,7 @@ public sealed class EntryModelStore(AppDbContext db)
     public async Task<EntryModelDossier> Save(Guid clientId, EntryModelSave input, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({"accounting:" + clientId}, 0))", ct);
+        await db.LockResource("accounting:" + clientId, ct);
         Validation.Require(await db.Clients.AnyAsync(x => x.Id == clientId, ct), "Client introuvable.");
         var row = await db.ClientEntryModelSets.SingleOrDefaultAsync(x => x.ClientId == clientId, ct);
         if ((row?.Version ?? 0) != input.Version) throw new AppException(409, "Les modèles ont changé. Rechargez-les avant d'enregistrer.");
