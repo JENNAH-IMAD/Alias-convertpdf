@@ -42,18 +42,31 @@ L’aperçu affiche les mouvements à corriger et les totaux débit/crédit. Le 
 
 ## Installation sous Windows
 
-### 1. Récupérer les sources et vérifier les prérequis
+### 1. Récupérer le projet depuis GitHub
 
-Installez Git, le SDK .NET 8, Node.js avec npm, Python 3.12 x64 et SQL Server. Pour cette version de Next.js, utilisez Node.js 20.9 ou une version supérieure compatible. SQL Server Express convient à une installation locale. La base doit avoir un niveau de compatibilité 130 ou supérieur.
+Ouvrez PowerShell dans le dossier où vous voulez enregistrer le projet. Clonez la branche `main` du dépôt.
 
 ```powershell
-git clone https://github.com/JENNAH-IMAD/Alias-convertpdf.git
+git clone --branch main https://github.com/JENNAH-IMAD/Alias-convertpdf.git
 Set-Location Alias-convertpdf
 ```
 
-Vérifiez que la branche récupérée correspond à ce README. Si elle indique PostgreSQL, utilisez la copie SQL Server du projet ou sa branche lorsqu’elle est publiée.
+Si vous utilisez un ZIP, ouvrez le [dépôt GitHub](https://github.com/JENNAH-IMAD/Alias-convertpdf/tree/main), cliquez sur **Code → Download ZIP**, décompressez-le et ouvrez PowerShell dans le dossier qui contient `Lancer-local.cmd`. Ce dossier est la **racine du projet**. Exécutez-y les commandes ci-dessous.
 
-### 2. Configurer SQL Server
+### 2. Installer les prérequis
+
+Installez le **SDK .NET 8**, **Node.js 20.9 ou une version supérieure compatible** avec npm, **Python 3.12 x64** avec le lanceur Windows `py`, et **SQL Server**. SQL Server Express convient à une installation locale. La base doit avoir un niveau de compatibilité 130 ou supérieur. Pour utiliser `git clone`, installez aussi Git.
+
+Ouvrez une nouvelle fenêtre PowerShell après l’installation pour vérifier les outils.
+
+```powershell
+dotnet --list-sdks
+node --version
+npm --version
+py -3.12 --version
+```
+
+### 3. Configurer SQL Server
 
 Créez ou complétez le fichier local `backend/BankStatementConverter.API/appsettings.Development.json`.
 
@@ -71,11 +84,11 @@ Créez ou complétez le fichier local `backend/BankStatementConverter.API/appset
 }
 ```
 
-Adaptez le serveur et le nom de base à votre instance. Avec l’authentification Windows, le compte qui lance l’API doit avoir accès à SQL Server et les droits nécessaires pour appliquer les migrations. Utilisez une connexion sécurisée et gardez les identifiants dans la configuration locale.
+Vérifiez que le service SQL Server est démarré. Dans l’exemple, `localhost` désigne l’instance par défaut. Pour une instance nommée SQL Server Express, remplacez-le par `.\\SQLEXPRESS` dans le JSON. Le compte Windows qui lance l’API doit pouvoir accéder à la base et appliquer les migrations. Si ce compte ne peut pas créer de base, faites créer la base `Alias` sur l’instance avant le premier lancement. Gardez les identifiants dans la configuration locale.
 
 Pour reprendre des données existantes, conservez la sauvegarde SQL Server, le dossier défini par `Storage:Root` et les clés de protection. L’outil `tools/SqlServerTransfer` permet de copier et vérifier une ancienne base PostgreSQL dont le schéma correspond au projet.
 
-### 3. Installer les dépendances et lancer Alias
+### 4. Installer les dépendances et lancer Alias
 
 Depuis la racine du projet, installez les dépendances web.
 
@@ -89,7 +102,7 @@ Dans un terminal dédié, installez et démarrez le moteur OCR. Les modèles son
 powershell -ExecutionPolicy Bypass -File services/ocr/start.ps1 -Install
 ```
 
-Dans un deuxième terminal, lancez l’API et l’interface.
+Dans un deuxième terminal ouvert à la racine du projet, lancez l’API et l’interface.
 
 ```powershell
 .\Lancer-local.cmd
@@ -97,14 +110,15 @@ Dans un deuxième terminal, lancez l’API et l’interface.
 
 Ouvrez [Alias sur le port 3002](http://localhost:3002). À la première ouverture d’une base neuve, créez le compte administrateur. Pour les démarrages suivants, relancez le script OCR sans `-Install`, puis ouvrez `Lancer-local.cmd`.
 
-### 4. Vérifier les services
+### 5. Vérifier les services
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:5081/health
 Invoke-RestMethod http://127.0.0.1:8091/health
+(Invoke-WebRequest -UseBasicParsing http://localhost:3002).StatusCode
 ```
 
-Les deux services doivent répondre avec un statut `ok`. Le premier démarrage de PaddleOCR peut prendre plus de temps pendant le chargement des modèles.
+L’API et PaddleOCR doivent répondre avec un statut `ok`. L’interface doit répondre avec le code HTTP `200`. Si l’API ne démarre pas, vérifiez la connexion SQL Server et le nom de l’instance. Si l’OCR ne répond pas, consultez le terminal OCR et attendez la fin du chargement des modèles.
 
 ## Utiliser Alias
 
