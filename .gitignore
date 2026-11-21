@@ -15,6 +15,7 @@ uploads/
 .local/
 /tmp/
 /output/
+/data/snapshot-local/
 TestResults/
 **/__pycache__/
 data/snapshot/convertbank.dump

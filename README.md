@@ -88,6 +88,24 @@ Vérifiez que le service SQL Server est démarré. Dans l’exemple, `localhost`
 
 Pour reprendre des données existantes, conservez la sauvegarde SQL Server, le dossier défini par `Storage:Root` et les clés de protection. L’outil `tools/SqlServerTransfer` permet de copier et vérifier une ancienne base PostgreSQL dont le schéma correspond au projet.
 
+#### Reprendre les mêmes données après un nouveau clone
+
+Sur le **même poste**, vous pouvez continuer à utiliser la base existante. Dans le nouveau clone, configurez la même connexion SQL Server et le même chemin absolu `Storage:Root` que dans l’installation actuelle. Arrêtez l’ancienne instance d’Alias avant de démarrer le nouveau clone.
+
+Pour démarrer une **copie indépendante**, transférez séparément votre sauvegarde privée `data/snapshot-local/alias-sqlserver-…`. Elle contient `database.bacpac`, `uploads` et `manifest.json`. Les sauvegardes locales sont ignorées par Git car elles contiennent des données clients.
+
+1. Dans le nouveau clone, créez le fichier local `appsettings.Development.json` comme ci-dessus. Indiquez un **nouveau nom de base** qui n’existe pas encore, par exemple `AliasRestaure`.
+2. Depuis la racine du projet, importez le BACPAC. Remplacez le chemin du dossier de sauvegarde par le vôtre.
+
+   ```powershell
+   $snapshot = 'C:\chemin\vers\la-sauvegarde'
+   $config = 'backend/BankStatementConverter.API/appsettings.Development.json'
+   dotnet run --project tools/ProjectSnapshot -c Release -- restore-sqlserver "$snapshot/database.bacpac" $config
+   ```
+
+3. Copiez le **contenu** du dossier `uploads` de la sauvegarde vers un nouveau dossier de stockage, puis renseignez son chemin absolu dans `Storage:Root`. Dans le JSON, doublez les barres obliques inverses des chemins Windows.
+4. Démarrez Alias et reconnectez-vous avec un compte existant. Vérifiez un client, un PDF original et un fichier d’export avant de traiter de nouveaux relevés.
+
 ### 4. Installer les dépendances et lancer Alias
 
 Depuis la racine du projet, installez les dépendances web.
